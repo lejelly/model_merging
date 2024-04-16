@@ -1,7 +1,0 @@
-torch==2.0.1
-transformers==4.33.1
-datasets==2.13.1
-vllm==0.1.4
-human_eval
-numpy
-tqdm
