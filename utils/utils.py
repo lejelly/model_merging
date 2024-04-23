@@ -93,7 +93,7 @@ def smart_tokenizer_and_embedding_resize(
 
     Note: This is the unoptimized version that may make your embedding size not be divisible by 64.
     """
-    assert tokenizer.vocab_size == 32000
+    assert tokenizer.vocab_size == 128000
     num_new_tokens = tokenizer.add_special_tokens(special_tokens_dict)
     if num_new_tokens > 0:
         model.resize_token_embeddings(tokenizer.vocab_size + num_new_tokens)

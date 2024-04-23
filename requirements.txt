@@ -5,3 +5,4 @@ vllm==0.1.4
 human_eval
 numpy
 tqdm
+accelerate
