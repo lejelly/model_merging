@@ -11,16 +11,17 @@ from utils.utils import set_random_seed, smart_tokenizer_and_embedding_resize
 from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test_gsm8k, test_hendrycks_math, test_human_eval, test_mbpp
 from utils.load_config import cache_dir
 
+os.environ['CUDA_VISIBLE_DEVICES'] = '1,2'
 
 task_model_mapping_dict = {
-    "instruct": "WizardLM-13B-V1.2",
-    "math": "WizardMath-13B-V1.0",
-    "code": "llama-2-13b-code-alpaca"
+    "instruct": "meta-llama/Meta-Llama-3-8B-Instruct",
+    #"math": "WizardMath-13B-V1.0",
+    #"code": "llama-2-13b-code-alpaca",
+    "japanese": "lightblue/suzume-llama-3-8B-japanese",
 }
 finetuned_model_backbone_mapping_dict = {
-    "WizardLM-13B-V1.2": "Llama-2-13b-hf",
-    "WizardMath-13B-V1.0": "Llama-2-13b-hf",
-    "llama-2-13b-code-alpaca": "Llama-2-13b-hf"
+    "meta-llama/Meta-Llama-3-8B-Instruct": "meta-llama/Meta-Llama-3-8B",
+    "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B"
 }
 
 
@@ -104,9 +105,11 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         save_math_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math/{args.save_model_name}"
     if args.merge_code:
         save_code_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/code/{args.save_model_name}"
+    if args.merge_japanese:
+        save_japanese_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/japanese/{args.save_model_name}"
 
     # since the tokenizers of different tasks are different, we need to save them (together with the model) separately
-    save_model_paths = [save_instruct_model_path, save_math_model_path, save_code_model_path]
+    save_model_paths = [save_instruct_model_path, save_math_model_path, save_code_model_path, save_japanese_model_path]
     index = 0
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -117,6 +120,19 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     logger.info(f"models are saved")
     del merged_model, tokenizers
 
+    # Evaluate the merged model on Math task
+    logger.info(f"evaluating merged model on math task...")
+    llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,
+                        args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                        just_inference=True, save_model_path=None)
+    test_data_path = "math_code_data/gsm8k_test.jsonl"
+    test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+    test_data_path = "math_code_data/MATH_test.jsonl"
+    test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                        start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+
+    '''
     if save_instruct_model_path is not None:
         logger.info(f"evaluating merged model on instruct task...")
         llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,
@@ -152,6 +168,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         test_mbpp(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index,
                   save_model_path=None, save_gen_results_folder=save_gen_results_folder)
+    '''
 
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -163,6 +180,7 @@ parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_instruct", action="store_true", default=False, help="whether to merge instruct model")
 parser.add_argument("--merge_math", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merge_code", action="store_true", default=False, help="whether to merge code model")
+parser.add_argument("--merge_japanese", action="store_true", default=False, help="whether to merge code model")
 parser.add_argument("--merging_method_name", type=str, default="average_merging", help="name of the method to merge models",
                     choices=["average_merging", "task_arithmetic", "mask_merging"])
 parser.add_argument("--scaling_coefficient", type=float, default=1.0, help="scaling coefficient to merge the task vector")
@@ -189,10 +207,10 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    assert sum([args.merge_instruct, args.merge_math, args.merge_code]) >= 2, "should merge two tasks at least!"
+    assert sum([args.merge_instruct, args.merge_math, args.merge_code, args.merge_japanese]) >= 2, "should merge two tasks at least!"
     finetuned_model_names = []
     merge_task_names = []
-    for merge_flag, task_name in zip([args.merge_instruct, args.merge_math, args.merge_code], ["instruct", "math", "code"]):
+    for merge_flag, task_name in zip([args.merge_instruct, args.merge_math, args.merge_code, args.merge_japanese], ["instruct", "math", "code", "japanese"]):
         if merge_flag:
             finetuned_model_names.append(task_model_mapping_dict[task_name])
             merge_task_names.append(task_name)
