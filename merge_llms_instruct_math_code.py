@@ -11,8 +11,6 @@ from utils.utils import set_random_seed, smart_tokenizer_and_embedding_resize
 from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test_gsm8k, test_hendrycks_math, test_human_eval, test_mbpp
 from utils.load_config import cache_dir
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1,2'
-
 task_model_mapping_dict = {
     "instruct": "meta-llama/Meta-Llama-3-8B-Instruct",
     #"math": "WizardMath-13B-V1.0",
