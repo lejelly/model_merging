@@ -123,3 +123,5 @@ save_gen_instruct_responses_results/
 
 tmp.py
 save_merge_llm_logs/
+save_logs/
+nohup.out

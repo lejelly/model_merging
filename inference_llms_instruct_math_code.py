@@ -32,7 +32,9 @@ finetuned_model_backbone_mapping_dict = {
     "WizardCoder-Python-7B-V1.0": "CodeLlama-7b-Python-hf",
     "WizardCoder-Python-13B-V1.0": "CodeLlama-13b-Python-hf",
     "WizardCoder-Python-34B-V1.0": "CodeLlama-34b-Python-hf",
-    "llama-2-13b-code-alpaca": "Llama-2-13b-hf"
+    "llama-2-13b-code-alpaca": "Llama-2-13b-hf",
+    "meta-llama/Meta-Llama-3-8B-Instruct": "meta-llama/Meta-Llama-3-8B",
+    "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B",
 }
 
 
@@ -554,7 +556,7 @@ if __name__ == "__main__":
                         choices=["WizardLM-7B-V1.0", "WizardLM-13B-V1.2", "WizardLM-70B-V1.0",
                                  "WizardMath-7B-V1.0", "WizardMath-13B-V1.0", "WizardMath-70B-V1.0",
                                  "WizardCoder-Python-7B-V1.0", "WizardCoder-Python-13B-V1.0", "WizardCoder-Python-34B-V1.0",
-                                 "llama-2-13b-code-alpaca"])
+                                 "llama-2-13b-code-alpaca", "meta-llama/Meta-Llama-3-8B-Instruct", "lightblue/suzume-llama-3-8B-japanese"])
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp"])
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--end_index", type=int, default=sys.maxsize)
