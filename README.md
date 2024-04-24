@@ -1,4 +1,4 @@
-# DARE
+# DARE: Drop And RE-scale
 - Paper: [Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch](https://arxiv.org/abs/2311.03099)
 
 - code: [official repogitory](https://github.com/yule-BUAA/MergeLM?tab=readme-ov-file) 
