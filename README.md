@@ -5,12 +5,21 @@
 
 
 # Model(for now)
-You can add models in merge_llms_instruct_math_code.py
-### BASE MODEL
+You can add models in `merge_llms_instruct_math_code.py` and `inference_llms_instruct_math_code`. 
+
+## BASE MODEL
+### Llama 2 base
+- [meta-llama/Llama-2-7b-hf](https://huggingface.co/meta-llama/Llama-2-7b-hf)
+### Llama 3 base
 - [meta-llama/Meta-Llama-3-8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B)
-### FINE-TUNED MODEL
+
+## FINE-TUNED MODEL
+### Llama 2 base
+- [EleutherAI/llemma_7b](https://huggingface.co/EleutherAI/llemma_7b)
+### Llama 3 base
 - [meta-llama/Meta-Llama-3-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct)
 - [lightblue/suzume-llama-3-8B-japanese](https://huggingface.co/lightblue/suzume-llama-3-8B-japanese)
+
 
 # Quick start
 ```
@@ -35,7 +44,9 @@ python inference_llms_instruct_math_code.py --dataset_name gsm8k --finetuned_mod
 ```
 
 ### Masking Fine-Tuned Parameters (drop rate 0.9) 
+```
 python inference_llms_instruct_math_code.py --dataset_name gsm8k --finetuned_model_name [MODEL NAME] --tensor_parallel_size 1 --weight_mask_rate 0.9 --use_weight_rescale --weight_format finetuned_weight
+```
 
 ### DARE (drop rate 0.9 and Re-scale)
 ```
