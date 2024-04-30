@@ -4,6 +4,8 @@ import sys
 import shutil
 import logging
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+
 import time
 from tqdm import tqdm
 import glob
@@ -19,7 +21,7 @@ from utils.utils import set_random_seed, smart_tokenizer_and_embedding_resize
 from utils.evaluate_llms_utils import batch_data, extract_answer_number, remove_boxed, last_boxed_only_string, process_results, \
     generate_instruction_following_task_prompt, get_math_task_prompt, generate_code_task_prompt, read_mbpp
 from utils.load_config import cache_dir
-
+import transformers
 
 finetuned_model_backbone_mapping_dict = {
     "WizardLM-7B-V1.0": "llama-7b-hf",
@@ -35,6 +37,8 @@ finetuned_model_backbone_mapping_dict = {
     "llama-2-13b-code-alpaca": "Llama-2-13b-hf",
     "meta-llama/Meta-Llama-3-8B-Instruct": "meta-llama/Meta-Llama-3-8B",
     "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B",
+    "EleutherAI/llemma_7b": "meta-llama/Llama-2-7b-hf",
+    "meta-llama/CodeLlama-7b-hf": "meta-llama/Llama-2-7b-hf",
 }
 
 
@@ -81,13 +85,53 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
     finetuned_tokenizer.save_pretrained(save_directory=recovered_model_save_path)
 
 
+class Llama3():
+    def __init__(self):
+        model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
+        self.pipeline = transformers.pipeline(
+            "text-generation",
+            model=model_id,
+            model_kwargs={"torch_dtype": torch.bfloat16},
+            device_map="auto",
+        )
+    
+    def generate(self, question):
+        messages = [
+            {"role": "system", "content": "You are a logical mathematician. Please answer the question."},
+            {"role": "user", "content": question},
+        ]
+
+        prompt = self.pipeline.tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=True
+        )
+
+        terminators = [
+            self.pipeline.tokenizer.eos_token_id,
+            self.pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+
+        outputs = self.pipeline(
+            prompt,
+            max_new_tokens=256,
+            eos_token_id=terminators,
+            do_sample=True,
+            temperature=0.1,
+            top_p=1.0,
+        )
+        
+        return outputs[0]["generated_text"][len(prompt):]
+
 def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size)
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype="auto")
         else:
-            assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size)
+            #assert os.path.exists(finetuned_model_name)
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype="auto")
+            if finetuned_model_name=="meta-llama/Meta-Llama-3-8B-Instruct":
+                llm = Llama3()
         assert save_model_path is None
     else:
         try:
@@ -208,7 +252,7 @@ def test_alpaca_eval(llm, finetuned_model_name, args, logger: logging.Logger, st
     torch.cuda.empty_cache()
 
 
-def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None):
+def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, is_cot=False):
     gsm8k_ins = []
     gsm8k_answers = []
     problem_prompt = get_math_task_prompt()
@@ -225,8 +269,9 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
     gsm8k_answers = gsm8k_answers[start_index:end_index]
     batch_gsm8k_ins = batch_data(gsm8k_ins, batch_size=60)
 
-    stop_tokens = ["Instruction:", "Instruction", "Response:", "Response"]
-    sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024, stop=stop_tokens)
+    #stop_tokens = ["Instruction:", "Instruction", "Response:", "Response"]
+    #sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024, stop=stop_tokens)
+    sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=256)
     logger.info(f"sampling params is {sampling_params}")
 
     res_completions = []
@@ -236,8 +281,10 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
         else:
             prompt = [prompt]
         completions = llm.generate(prompt, sampling_params)
+        #completions = llm.generate(prompt)
         for output in completions:
             generated_text = output.outputs[0].text
+            #generated_text = output
             res_completions.append(generated_text)
 
     results = []
@@ -556,7 +603,7 @@ if __name__ == "__main__":
                         choices=["WizardLM-7B-V1.0", "WizardLM-13B-V1.2", "WizardLM-70B-V1.0",
                                  "WizardMath-7B-V1.0", "WizardMath-13B-V1.0", "WizardMath-70B-V1.0",
                                  "WizardCoder-Python-7B-V1.0", "WizardCoder-Python-13B-V1.0", "WizardCoder-Python-34B-V1.0",
-                                 "llama-2-13b-code-alpaca", "meta-llama/Meta-Llama-3-8B-Instruct", "lightblue/suzume-llama-3-8B-japanese"])
+                                 "llama-2-13b-code-alpaca", "meta-llama/Meta-Llama-3-8B-Instruct", "lightblue/suzume-llama-3-8B-japanese", "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf"])
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp"])
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--end_index", type=int, default=sys.maxsize)
@@ -566,6 +613,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_weight_rescale", action="store_true", default=False, help="whether to rescale the weight by 1 / (1 - weight_mask_rate)")
     parser.add_argument("--mask_strategy", type=str, help="mask strategy", default="random", choices=["random", "magnitude"])
     parser.add_argument("--wizardcoder_use_llama2_as_backbone", action="store_true", default=False, help="whether to use llama-2 as the backbone for WizardCoder")
+    parser.add_argument("--is_cot", action="store_true", default=False, help="whether to use cot for gsm8k")
 
     try:
         args = parser.parse_args()
@@ -644,7 +692,7 @@ if __name__ == "__main__":
     elif args.dataset_name == "gsm8k":
         args.test_data_path = "math_code_data/gsm8k_test.jsonl"
         test_gsm8k(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                   start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path)
+                   start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path, is_cot=args.is_cot)
 
     elif args.dataset_name == "MATH":
         args.test_data_path = "math_code_data/MATH_test.jsonl"
