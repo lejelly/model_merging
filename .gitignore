@@ -126,3 +126,5 @@ save_merge_llm_logs/
 save_logs/
 nohup.out
 *.log
+models--meta-llama--Llama-2-13b-hf
+.lock

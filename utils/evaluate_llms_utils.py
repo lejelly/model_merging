@@ -287,6 +287,10 @@ def generate_instruction_following_task_prompt(instruction, is_chat_model=True):
     return prompt
 
 def get_math_task_prompt(is_cot=False):
+    prompt =(
+        "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. ASSISTANT: "
+    )
+    
     standard_prompt = (
         "Q: There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today? \n\n"
         "A: The answer is 6 \n\n"
@@ -344,7 +348,7 @@ def get_math_task_prompt(is_cot=False):
     )
     if is_cot:
         return cot_prompt
-    return standard_prompt
+    return prompt
 
 
 def generate_code_task_prompt(input_text):
