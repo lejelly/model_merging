@@ -12,14 +12,14 @@ from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test
 from utils.load_config import cache_dir
 
 task_model_mapping_dict = {
-    "instruct": "meta-llama/Meta-Llama-3-8B-Instruct",
-    "math": "EleutherAI/llemma_7b",
+    "instruct": "WizardLMTeam/WizardLM-13B-V1.0",
+    "math": "layoric/llama-2-13b-code-alpaca",
     "code": "meta-llama/CodeLlama-7b-hf",
     "japanese": "lightblue/suzume-llama-3-8B-japanese",
 }
 finetuned_model_backbone_mapping_dict = {
-    "meta-llama/Meta-Llama-3-8B-Instruct": "meta-llama/Meta-Llama-3-8B",
-    "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B"
+    "WizardLMTeam/WizardLM-13B-V1.0": "meta-llama/Meta-Llama-3-8B",
+    "layoric/llama-2-13b-code-alpaca": "meta-llama/Meta-Llama-3-8B"
     "EleutherAI/llemma_7b": "meta-llama/Llama-2-7b-hf",
     "meta-llama/CodeLlama-7b-hf": "meta-llama/Llama-2-7b-hf",
 }
