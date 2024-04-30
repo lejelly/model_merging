@@ -4,7 +4,7 @@ import sys
 import shutil
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 import time
 from tqdm import tqdm
@@ -39,6 +39,9 @@ finetuned_model_backbone_mapping_dict = {
     "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B",
     "EleutherAI/llemma_7b": "meta-llama/Llama-2-7b-hf",
     "meta-llama/CodeLlama-7b-hf": "meta-llama/Llama-2-7b-hf",
+    "WizardLMTeam/WizardLM-13B-V1.0": "meta-llama/Llama-2-13b-hf",
+    "Xwin-LM/Xwin-Math-13B-V1.0": "meta-llama/Llama-2-13b-hf",
+    "layoric/llama-2-13b-code-alpaca": "meta-llama/Llama-2-13b-hf",
 }
 
 
@@ -603,7 +606,8 @@ if __name__ == "__main__":
                         choices=["WizardLM-7B-V1.0", "WizardLM-13B-V1.2", "WizardLM-70B-V1.0",
                                  "WizardMath-7B-V1.0", "WizardMath-13B-V1.0", "WizardMath-70B-V1.0",
                                  "WizardCoder-Python-7B-V1.0", "WizardCoder-Python-13B-V1.0", "WizardCoder-Python-34B-V1.0",
-                                 "llama-2-13b-code-alpaca", "meta-llama/Meta-Llama-3-8B-Instruct", "lightblue/suzume-llama-3-8B-japanese", "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf"])
+                                 "llama-2-13b-code-alpaca", "meta-llama/Meta-Llama-3-8B-Instruct", "lightblue/suzume-llama-3-8B-japanese", "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf",
+                                 "WizardLMTeam/WizardLM-13B-V1.0", "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca",])
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp"])
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--end_index", type=int, default=sys.maxsize)
