@@ -18,8 +18,9 @@ You can add models in `merge_llms_instruct_math_code.py` and `inference_llms_ins
 ## FINE-TUNED MODEL
 **Llama 2 base**
 - [EleutherAI/llemma_7b](https://huggingface.co/EleutherAI/llemma_7b)
-- [layoric/llama-2-13b-code-alpaca](https://huggingface.co/layoric/llama-2-13b-code-alpaca)
 - [meta-llama/CodeLlama-7b-hf](https://huggingface.co/meta-llama/CodeLlama-7b-hf)
+- [layoric/llama-2-13b-code-alpaca](https://huggingface.co/layoric/llama-2-13b-code-alpaca)
+- [WizardLMTeam/WizardLM-13B-V1.0](https://huggingface.co/WizardLMTeam/WizardLM-13B-V1.0)
 
 **Llama 3 base**
 - [meta-llama/Meta-Llama-3-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct)
