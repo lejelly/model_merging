@@ -13,13 +13,15 @@ from utils.load_config import cache_dir
 
 task_model_mapping_dict = {
     "instruct": "meta-llama/Meta-Llama-3-8B-Instruct",
-    #"math": "WizardMath-13B-V1.0",
-    #"code": "llama-2-13b-code-alpaca",
+    "math": "EleutherAI/llemma_7b",
+    "code": "meta-llama/CodeLlama-7b-hf",
     "japanese": "lightblue/suzume-llama-3-8B-japanese",
 }
 finetuned_model_backbone_mapping_dict = {
     "meta-llama/Meta-Llama-3-8B-Instruct": "meta-llama/Meta-Llama-3-8B",
     "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B"
+    "EleutherAI/llemma_7b": "meta-llama/Llama-2-7b-hf",
+    "meta-llama/CodeLlama-7b-hf": "meta-llama/Llama-2-7b-hf",
 }
 
 

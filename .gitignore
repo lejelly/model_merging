@@ -125,3 +125,4 @@ tmp.py
 save_merge_llm_logs/
 save_logs/
 nohup.out
+*.log
