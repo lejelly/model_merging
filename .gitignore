@@ -128,3 +128,6 @@ nohup.out
 *.log
 models--meta-llama--Llama-2-13b-hf
 .lock
+
+work/*
+results/*

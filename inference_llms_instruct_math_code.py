@@ -4,8 +4,6 @@ import sys
 import shutil
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-
 import time
 from tqdm import tqdm
 import glob
@@ -42,6 +40,7 @@ finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardLM-13B-V1.0": "meta-llama/Llama-2-13b-hf",
     "Xwin-LM/Xwin-Math-13B-V1.0": "meta-llama/Llama-2-13b-hf",
     "layoric/llama-2-13b-code-alpaca": "meta-llama/Llama-2-13b-hf",
+    "meta-llama/Llama-2-13b-hf": "meta-llama/Llama-2-13b-hf",
 }
 
 
@@ -255,10 +254,10 @@ def test_alpaca_eval(llm, finetuned_model_name, args, logger: logging.Logger, st
     torch.cuda.empty_cache()
 
 
-def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, is_cot=False):
+def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, prompt_type=None, comp_file_path=None, model_name=None, drop_rate=None):
     gsm8k_ins = []
     gsm8k_answers = []
-    problem_prompt = get_math_task_prompt()
+    problem_prompt = get_math_task_prompt(prompt_type)
     logger.info(f"gsm8k test prompt is {problem_prompt}")
     with open(test_data_path, "r+", encoding="utf8") as f:
         for idx, item in enumerate(jsonlines.Reader(f)):
@@ -284,10 +283,8 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
         else:
             prompt = [prompt]
         completions = llm.generate(prompt, sampling_params)
-        #completions = llm.generate(prompt)
         for output in completions:
             generated_text = output.outputs[0].text
-            #generated_text = output
             res_completions.append(generated_text)
 
     results = []
@@ -308,8 +305,14 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
     if save_model_path is not None:
         shutil.rmtree(save_model_path, ignore_errors=True)
 
+    if comp_file_path is not None:
+        result_message = f"accuracy: {accuracy}, drop_rate: {drop_rate}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
+        output_to_comparefile(comp_file_path, result_message)
+        
     del llm
     torch.cuda.empty_cache()
+    
+
 
 
 def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None):
@@ -598,6 +601,13 @@ def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, 
     del llm
     torch.cuda.empty_cache()
 
+def output_to_comparefile(file_path, content):
+    # if exist file, no->make it, yes->pass
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, "a" if os.path.exists(file_path) else "w") as file:
+        if os.path.exists(file_path):
+            file.write("\n")
+        file.write(content)
 
 if __name__ == "__main__":
 
@@ -617,7 +627,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_weight_rescale", action="store_true", default=False, help="whether to rescale the weight by 1 / (1 - weight_mask_rate)")
     parser.add_argument("--mask_strategy", type=str, help="mask strategy", default="random", choices=["random", "magnitude"])
     parser.add_argument("--wizardcoder_use_llama2_as_backbone", action="store_true", default=False, help="whether to use llama-2 as the backbone for WizardCoder")
-    parser.add_argument("--is_cot", action="store_true", default=False, help="whether to use cot for gsm8k")
+    parser.add_argument("--prompt_type", default="zeroshot", help="waht type of promt to use, zeroshot, fewshot, cot")
+    parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
 
     try:
         args = parser.parse_args()
@@ -642,12 +653,13 @@ if __name__ == "__main__":
             else:
                 finetuned_model_backbone_mapping_dict["WizardCoder-Python-13B-V1.0"] = "Llama-2-13b-hf"
             save_model_name = f"{save_model_name}_llama_2_as_backbone"
-        save_model_path = f"./save_models/{args.dataset_name}/{save_model_name}"
+        #save_model_path = f"./save_models/{args.dataset_name}/{save_model_name}"
+        save_model_path = f"/scratch/acf15429bz/model_merge/save_models/{args.dataset_name}/{save_model_name}"
         just_inference = False
     if args.dataset_name == "alpaca_eval":
-        save_gen_results_folder = f"./save_gen_instruct_responses_results/{args.dataset_name}/{save_model_name}"
+        save_gen_results_folder = f"{cache_dir}/save_gen_instruct_responses_results/{args.dataset_name}/{save_model_name}"
     elif args.dataset_name in ["human_eval", "mbpp"]:
-        save_gen_results_folder = f"./save_gen_codes_results/{args.dataset_name}/{save_model_name}"
+        save_gen_results_folder = f"{cache_dir}/save_gen_codes_results/{args.dataset_name}/{save_model_name}"
     else:
         save_gen_results_folder = None
     # set up logger
@@ -696,7 +708,7 @@ if __name__ == "__main__":
     elif args.dataset_name == "gsm8k":
         args.test_data_path = "math_code_data/gsm8k_test.jsonl"
         test_gsm8k(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                   start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path, is_cot=args.is_cot)
+                   start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path, prompt_type=args.prompt_type, comp_file_path=args.comp_file_path, model_name=args.finetuned_model_name, drop_rate=args.weight_mask_rate)
 
     elif args.dataset_name == "MATH":
         args.test_data_path = "math_code_data/MATH_test.jsonl"
