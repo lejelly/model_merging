@@ -73,7 +73,7 @@ def remove_boxed(s):
 
 
 def process_results(doc, completion, answer, invalid_outputs):
-    split_ans = completion.split('The answer is: ')
+    split_ans = completion.split('The answer is ')
     if len(split_ans) > 1:
         ans = split_ans[-1]
         extract_ans_temp = ans.split('.\n')[0]
@@ -286,69 +286,57 @@ def generate_instruction_following_task_prompt(instruction, is_chat_model=True):
 """
     return prompt
 
-def get_math_task_prompt(is_cot=False):
-    prompt =(
-        "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. ASSISTANT: "
+def get_math_task_prompt(prompt_type=None):
+    zeroshotcot =(
+        "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. ASSISTANT: "
     )
-    
-    standard_prompt = (
-        "Q: There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today? \n\n"
-        "A: The answer is 6 \n\n"
 
-        "Q: If there are 3 cars in the parking lot and 2 more cars arrive, how many cars are in the parking lot? \n\n"
-        "A: The answer is 5 \n\n"
-
-        "Q: Leah had 32 chocolates and her sister had 42. If they ate 35, how many pieces do they have left in total? \n\n"
-        "A: The answer is 39 \n\n"
-
-        "Q: Jason had 20 lollipops. He gave Denny some lollipops. Now Jason has 12 lollipops. How many lollipops did Jason give to Denny? \n\n"
-        "A: The answer is 8 \n\n"
-
-        "Q: Shawn has five toys. For Christmas, he got two toys each from his mom and dad. How many toys does he have now? \n\n"
-        "A: The answer is 9 \n\n"
-
-        "Q: There were nine computers in the server room. Five more computers were installed each day, from monday to thursday. How many computers are now in the server room? \n\n"
-        "A: The answer is 29 \n\n"
-
-        "Q: Michael had 58 golf balls. On tuesday, he lost 23 golf balls. On wednesday, he lost 2 more. How many golf balls did he have at the end of wednesday? \n\n"
-        "A: The answer is 33 \n\n"
-
-        "Q: Olivia has $23. She bought five bagels for $3 each. How much money does she have left?  \n\n"
-        "A: The answer is 8 \n\n"
+    fewshotcot = (
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
         
-        "Q: {instruction} \n\n"
-    )
+        "Examples:\n\n"
+        
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today?\n"
+        "ASSISTANT: There are 15 trees originally. Then there were 21 trees after the Grove workers planted some more. So there must have been 21 - 15 = 6 trees that were planted. The answer is: 6.\n\n"
+
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: If there are 3 cars in the parking lot and 2 more cars arrive, how many cars are in the parking lot?\n"
+        "ASSISTANT: There are originally 3 cars. Then 2 more cars arrive. Now 3 + 2 = 5 cars are in the parking lot. The answer is: 5.\n\n"
+
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: Leah had 32 chocolates and her sister had 42. If they ate 35, how many pieces do they have left in total?\n"
+        "ASSISTANT: Originally, Leah had 32 chocolates and her sister had 42. So in total they had 32 + 42 = 74. After eating 35, they had 74 - 35 = 39 pieces left in total. The answer is: 39.\n\n"
+
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: Jason had 20 lollipops. He gave Denny some lollipops. Now Jason has 12 lollipops. How many lollipops did Jason give to Denny?\n"
+        "ASSISTANT: Jason had 20 lollipops originally. Then he had 12 after giving some to Denny. So he gave Denny 20 - 12 = 8 lollipops. The answer is: 8.\n\n"
+
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: Shawn has five toys. For Christmas, he got two toys each from his mom and dad. How many toys does he have now?\n"
+        "ASSISTANT: Shawn started with 5 toys. He then got 2 toys each from his mom and dad. So he got 2 * 2 = 4 more toys. Now he has 5 + 4 = 9 toys. The answer is: 9.\n\n"
+
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: There were nine computers in the server room. Five more computers were installed each day, from monday to thursday. How many computers are now in the server room?\n"
+        "ASSISTANT: There were originally 9 computers. For each day from monday to thursday, 5 more computers were installed. So 4 * 5 = 20 computers were added. Now 9 + 20 = 29 computers are now in the server room. The answer is: 29.\n\n"
+
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: Michael had 58 golf balls. On tuesday, he lost 23 golf balls. On wednesday, he lost 2 more. How many golf balls did he have at the end of wednesday?\n"
+        "ASSISTANT: Michael started with 58 golf balls. He lost 23 on Tuesday, and lost 2 more on wednesday. So he had 58 - 23 = 35 at the end of Tuesday, and 35 - 2 = 33 at the end of wednesday. The answer is: 33.\n\n"
+
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: Olivia has $23. She bought five bagels for $3 each. How much money does she have left? \n"
+        "ASSISTANT: Olivia had 23 dollars. She bought 5 bagels for 3 dollars each. So she spent 5 * 3 = 15 dollars. Now she has 23 - 15 = 8 dollars left. The answer is: 8.\n\n"
     
-    cot_prompt = (
-        "Q: There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be 21 trees. How many trees did the grove workers plant today?\n\n"
-        "A: There are 15 trees originally. Then there were 21 trees after the Grove workers planted some more. So there must have been 21 - 15 = 6 trees that were planted. The answer is 6.\n\n"
-
-        "Q: If there are 3 cars in the parking lot and 2 more cars arrive, how many cars are in the parking lot?\n\n"
-        "A: There are originally 3 cars. Then 2 more cars arrive. Now 3 + 2 = 5 cars are in the parking lot. The answer is 5.\n\n"
-
-        "Q: Leah had 32 chocolates and her sister had 42. If they ate 35, how many pieces do they have left in total?\n\n"
-        "A: Originally, Leah had 32 chocolates and her sister had 42. So in total they had 32 + 42 = 74. After eating 35, they had 74 - 35 = 39 pieces left in total. The answer is 39.\n\n"
-
-        "Q: Jason had 20 lollipops. He gave Denny some lollipops. Now Jason has 12 lollipops. How many lollipops did Jason give to Denny?\n\n"
-        "A: Jason had 20 lollipops originally. Then he had 12 after giving some to Denny. So he gave Denny 20 - 12 = 8 lollipops. The answer is 8.\n\n"
-
-        "Q: Shawn has five toys. For Christmas, he got two toys each from his mom and dad. How many toys does he have now?\n\n"
-        "A: Shawn started with 5 toys. He then got 2 toys each from his mom and dad. So he got 2 * 2 = 4 more toys. Now he has 5 + 4 = 9 toys. The answer is 9.\n\n"
-
-        "Q: There were nine computers in the server room. Five more computers were installed each day, from monday to thursday. How many computers are now in the server room?\n\n"
-        "A: There were originally 9 computers. For each day from monday to thursday, 5 more computers were installed. So 4 * 5 = 20 computers were added. Now 9 + 20 = 29 computers are now in the server room. The answer is 29.\n\n"
-
-        "Q: Michael had 58 golf balls. On tuesday, he lost 23 golf balls. On wednesday, he lost 2 more. How many golf balls did he have at the end of wednesday?\n\n"
-        "A: Michael started with 58 golf balls. He lost 23 on Tuesday, and lost 2 more on wednesday. So he had 58 - 23 = 35 at the end of Tuesday, and 35 - 2 = 33 at the end of wednesday. The answer is 33.\n\n"
-
-        "Q: Olivia has $23. She bought five bagels for $3 each. How much money does she have left? \n\n"
-        "A: Olivia had 23 dollars. She bought 5 bagels for 3 dollars each. So she spent 5 * 3 = 15 dollars. Now she has 23 - 15 = 8 dollars left. The answer is 8.\n\n"
-                
-        "Q: {instruction} \n\n"
+        "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
+        "USER: {instruction} \n"
+        "ASSISTANT: "
     )
-    if is_cot:
-        return cot_prompt
-    return prompt
+    if prompt_type=="zeroshot":
+        return zeroshotcot
+    elif prompt_type=="fewshot":
+        return fewshot
+    return fewshotcot
 
 
 def generate_code_task_prompt(input_text):

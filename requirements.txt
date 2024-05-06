@@ -6,3 +6,5 @@ human_eval
 numpy
 tqdm
 accelerate
+jsonlines
+fraction
