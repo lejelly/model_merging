@@ -23,6 +23,10 @@ huggingface login
 ```
 huggingface-cli login
 ```
+Environment variables
+```
+export HF_HOME=/scratch/acf15429bz/model_merge/pretrained_models
+```
 Deactivating a virtual environment
 ```
 deactivate
