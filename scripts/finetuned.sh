@@ -1,6 +1,6 @@
 #!/bin/bash
-#$ -l rt_AG.small=1
-#$ -l h_rt=1:00:00
+#$ -l rt_AF=1
+#$ -l h_rt=0:30:00
 #$ -j y
 #$ -cwd
 
@@ -11,16 +11,19 @@ DATASET=gsm8k
 COMP_FILE_PATH=./results/single_model_inference/${PROMPT_TYPE}/gsm8k_finetuned_${MODEL_NAME}.txt
 
 # module load
+source import-env.sh .env
 source /etc/profile.d/modules.sh
-module load python/3.11/3.11.9 
+module load python/3.10/3.10.14
 module load cuda/12.1/12.1.1 
 module load cudnn/8.9/8.9.7 
 
-# start inference
-cd /home/acf15429bz/model_merging/model_merging
+# environment setup
+cd $PATH_TO_WORKING_DIR
 source work/bin/activate
-HUGGINGFACE_TOKEN=
 huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
+export CUDA_HOME=$CUDA_HOME_PATH
+
+# start inference
 python inference_llms_instruct_math_code.py \
     --dataset_name $DATASET \
     --finetuned_model_name $MODEL_NAME \

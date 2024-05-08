@@ -62,4 +62,3 @@ class TaskVector:
                 merged_params[param_name] = pretrained_param_dict[param_name] + scaling_coefficient * self.task_vector_param_dict[param_name]
 
         return merged_params
-

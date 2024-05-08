@@ -332,10 +332,9 @@ def get_math_task_prompt(prompt_type=None):
         "USER: {instruction} \n"
         "ASSISTANT: "
     )
-    if prompt_type=="zeroshot":
+    
+    if prompt_type=="zeroshotcot":
         return zeroshotcot
-    elif prompt_type=="fewshot":
-        return fewshot
     return fewshotcot
 
 

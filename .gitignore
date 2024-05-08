@@ -121,13 +121,15 @@ save_gen_codes_results/
 save_gen_instruct_responses_results/
 
 
-tmp.py
 save_merge_llm_logs/
 save_logs/
 nohup.out
 *.log
-models--meta-llama--Llama-2-13b-hf
-.lock
+models--*
+.locks
+figures
 
 work/*
 results/*
+logs/*
+tmp.*

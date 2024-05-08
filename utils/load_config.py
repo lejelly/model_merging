@@ -1,6 +1,6 @@
 import torch
 
 if torch.cuda.is_available():
-    cache_dir = '/scratch/acf15429bz/model_merge'
+    cache_dir = ''
 else:
-    cache_dir = '/scratch/acf15429bz/model_merge'
+    cache_dir = ''

@@ -1,59 +1,38 @@
 #!/bin/bash
 
-## w/o DARE #####################################################
+MODEL_NAME_1=WizardLMTeam/WizardMath-7B-V1.1
+MODEL_NAME_2=augmxnt/shisa-gamma-7b-v1
+MODEL_NAME_3=GAIR/Abel-7B-002
+MODEL_NAME_4=tokyotech-llm/Swallow-MS-7b-v0.1
+
+MODEL_SETS=($MODEL_NAME_1 $MODEL_NAME_2 $MODEL_NAME_3 $MODEL_NAME_4)
+
+## w/o DARE ##########################################################
 SCRIPT_TYPE=withoutDARE
-PROMPT=zeroshotcot
-
-qsub -g gcb50389 -N log.${SCRIPT_TYPE}.xwin_${PROMPT} scripts/${SCRIPT_TYPE}.sh Xwin-LM/Xwin-Math-13B-V1.0 $PROMPT
-qsub -g gcb50389 -N log.${SCRIPT_TYPE}.wizardlm_${PROMPT} scripts/${SCRIPT_TYPE}.sh WizardLMTeam/WizardLM-13B-V1.0 $PROMPT
-qsub -g gcb50389 -N log.${SCRIPT_TYPE}.code-alpaca_${PROMPT} scripts/${SCRIPT_TYPE}.sh layoric/llama-2-13b-code-alpaca $PROMPT
-
-PROMPT=fewshotcot
-qsub -g gcb50389 -N log.${SCRIPT_TYPE}.xwin_${PROMPT}_${SCRIPT_TYPE} scripts/${SCRIPT_TYPE}.sh Xwin-LM/Xwin-Math-13B-V1.0 $PROMPT
-qsub -g gcb50389 -N log.${SCRIPT_TYPE}.wizardlm_${PROMPT}_${SCRIPT_TYPE} scripts/${SCRIPT_TYPE}.sh WizardLMTeam/WizardLM-13B-V1.0 $PROMPT
-qsub -g gcb50389 -N log.${SCRIPT_TYPE}.code-alpaca_${PROMPT}_${SCRIPT_TYPE} scripts/${SCRIPT_TYPE}.sh layoric/llama-2-13b-code-alpaca $PROMPT
-
-## Drop Only #####################################################
-SCRIPT_TYPE=dropOnly
-PROMPT=zeroshotcot
-DROP_RATES=(0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 0.99)
-
-for DROP_RATE in ${DROP_RATES[@]}
+for MODEL in ${MODEL_SETS[@]}
 do
-    qsub -g gcb50389 -N log.${SCRIPT_TYPE}.xwin_dr${DROP_RATE} scripts/${SCRIPT_TYPE}.sh Xwin-LM/Xwin-Math-13B-V1.0 $PROMPT $DROP_RATE  
-    sleep 60
+    PROMPT=zeroshotcot
+    qsub -g gcb50389 -N logs/zero_few_shot_cot/${SCRIPT_TYPE}.${MODEL}.${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT 
+    PROMPT=fewshotcot
+    qsub -g gcb50389 -N logs/zero_few_shot_cot/${SCRIPT_TYPE}.${MODEL}.${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT
 done
 
-## Magnitude-Based Pruning #####################################################
-SCRIPT_TYPE=magnitude
+######################################################################
+MODEL_NAME=WizardLMTeam/WizardMath-7B-V1.1
 PROMPT=zeroshotcot
 DROP_RATES=(0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 0.99)
-
 for DROP_RATE in ${DROP_RATES[@]}
 do
-    qsub -g gcb50389 -N log.${SCRIPT_TYPE}.xwin_dr${DROP_RATE} scripts/${SCRIPT_TYPE}.sh Xwin-LM/Xwin-Math-13B-V1.0 $PROMPT $DROP_RATE  
-    sleep 60
-done
-
-## Masking Fine-Tuned Parameters #####################################################
-SCRIPT_TYPE=finetuned
-PROMPT=zeroshotcot
-DROP_RATES=(0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 0.99)
-
-for DROP_RATE in ${DROP_RATES[@]}
-do
-    qsub -g gcb50389 -N log.${SCRIPT_TYPE}.xwin_dr${DROP_RATE} scripts/${SCRIPT_TYPE}.sh Xwin-LM/Xwin-Math-13B-V1.0 $PROMPT $DROP_RATE  
-    sleep 60
-done
-
-## DARE #####################################################
-
-SCRIPT_TYPE=dare
-PROMPT=zeroshotcot
-DROP_RATES=(0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 0.99)
-
-for DROP_RATE in ${DROP_RATES[@]}
-do
-    qsub -g gcb50389 -N log.${SCRIPT_TYPE}.xwin_dr${DROP_RATE} scripts/${SCRIPT_TYPE}.sh Xwin-LM/Xwin-Math-13B-V1.0 $PROMPT $DROP_RATE  
-    sleep 60
+    ## Drop Only #####################################################
+    SCRIPT_TYPE=dropOnly
+    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
+    ## Magnitude-Based Pruning #######################################
+    SCRIPT_TYPE=magnitude
+    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE
+    ## Masking Fine-Tuned Parameters #################################
+    SCRIPT_TYPE=finetuned
+    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
+    ## DARE ##########################################################
+    SCRIPT_TYPE=dare
+    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
 done
