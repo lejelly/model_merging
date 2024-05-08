@@ -22,25 +22,22 @@ from utils.load_config import cache_dir
 import transformers
 
 finetuned_model_backbone_mapping_dict = {
-    "WizardLM-7B-V1.0": "llama-7b-hf",
-    "WizardLM-7B-V1.0-recovered": "llama-7b-hf",
-    "WizardLM-13B-V1.2": "Llama-2-13b-hf",
-    "WizardLM-70B-V1.0": "Llama-2-70b-hf",
-    "WizardMath-7B-V1.0": "Llama-2-7b-hf",
-    "WizardMath-13B-V1.0": "Llama-2-13b-hf",
-    "WizardMath-70B-V1.0": "Llama-2-70b-hf",
-    "WizardCoder-Python-7B-V1.0": "CodeLlama-7b-Python-hf",
-    "WizardCoder-Python-13B-V1.0": "CodeLlama-13b-Python-hf",
-    "WizardCoder-Python-34B-V1.0": "CodeLlama-34b-Python-hf",
-    "llama-2-13b-code-alpaca": "Llama-2-13b-hf",
-    "meta-llama/Meta-Llama-3-8B-Instruct": "meta-llama/Meta-Llama-3-8B",
+    "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
+    "augmxnt/shisa-gamma-7b-v1": "mistralai/Mistral-7B-v0.1",
+    "GAIR/Abel-7B-002": "mistralai/Mistral-7B-v0.1",
+    "tokyotech-llm/Swallow-MS-7b-v0.1": "mistralai/Mistral-7B-v0.1",
+    
+    "rinna/llama-3-youko-8b": "meta-llama/Meta-Llama-3-8B",
+    "rombodawg/Llama-3-8B-Instruct-Coder-v2": "meta-llama/Meta-Llama-3-8B",
     "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B",
+
     "EleutherAI/llemma_7b": "meta-llama/Llama-2-7b-hf",
     "meta-llama/CodeLlama-7b-hf": "meta-llama/Llama-2-7b-hf",
-    "WizardLMTeam/WizardLM-13B-V1.0": "meta-llama/Llama-2-13b-hf",
+    "meta-llama/CodeLlama-7b-Python-hf": "meta-llama/Llama-2-7b-hf",
+
     "Xwin-LM/Xwin-Math-13B-V1.0": "meta-llama/Llama-2-13b-hf",
     "layoric/llama-2-13b-code-alpaca": "meta-llama/Llama-2-13b-hf",
-    "meta-llama/Llama-2-13b-hf": "meta-llama/Llama-2-13b-hf",
+    "meta-llama/CodeLlama-13b-hf": "meta-llama/Llama-2-13b-hf",
 }
 
 
@@ -86,54 +83,13 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
     finetuned_model.save_pretrained(save_directory=recovered_model_save_path)
     finetuned_tokenizer.save_pretrained(save_directory=recovered_model_save_path)
 
-
-class Llama3():
-    def __init__(self):
-        model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
-        self.pipeline = transformers.pipeline(
-            "text-generation",
-            model=model_id,
-            model_kwargs={"torch_dtype": torch.bfloat16},
-            device_map="auto",
-        )
-    
-    def generate(self, question):
-        messages = [
-            {"role": "system", "content": "You are a logical mathematician. Please answer the question."},
-            {"role": "user", "content": question},
-        ]
-
-        prompt = self.pipeline.tokenizer.apply_chat_template(
-                messages, 
-                tokenize=False, 
-                add_generation_prompt=True
-        )
-
-        terminators = [
-            self.pipeline.tokenizer.eos_token_id,
-            self.pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
-        ]
-
-        outputs = self.pipeline(
-            prompt,
-            max_new_tokens=256,
-            eos_token_id=terminators,
-            do_sample=True,
-            temperature=0.1,
-            top_p=1.0,
-        )
-        
-        return outputs[0]["generated_text"][len(prompt):]
-
 def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype="auto")
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size)
         else:
             #assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype="auto")
-            if finetuned_model_name=="meta-llama/Meta-Llama-3-8B-Instruct":
-                llm = Llama3()
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size)
         assert save_model_path is None
     else:
         try:
@@ -150,6 +106,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         # set the pad_token of pretrained and finetuned tokenizer
         # note that WizardMath-70B-V1.0 adds two tokens {"<pad>": 32000, "[PAD]": 32001} with (32002, 8192) token embedding size
         # therefore, for WizardMath-70B-V1.0, we add one distinct pad_token "<pad>[PAD]" to reshape the token embedding size to (32001, 8192)
+
         if "WizardMath-70B-V1.0" in finetuned_model_name:
             smart_tokenizer_and_embedding_resize(
                 special_tokens_dict=dict(pad_token="<pad>[PAD]"),
@@ -179,6 +136,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
                                                exclude_param_names_regex=[], weight_format=args.weight_format,
                                                weight_mask_rate=args.weight_mask_rate,
                                                use_weight_rescale=args.use_weight_rescale, mask_strategy=args.mask_strategy)
+        
         # copy the masked parameters to the original model
         for param_name, param_value in finetuned_model.named_parameters():
             if param_name in masked_param_dict:
@@ -312,7 +270,6 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
     del llm
     torch.cuda.empty_cache()
     
-
 
 
 def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None):
@@ -613,11 +570,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("Interface for inference LLMs")
     parser.add_argument("--finetuned_model_name", type=str, default="WizardLM-13B-V1.2", help="name of the finetuned language model",
-                        choices=["WizardLM-7B-V1.0", "WizardLM-13B-V1.2", "WizardLM-70B-V1.0",
-                                 "WizardMath-7B-V1.0", "WizardMath-13B-V1.0", "WizardMath-70B-V1.0",
-                                 "WizardCoder-Python-7B-V1.0", "WizardCoder-Python-13B-V1.0", "WizardCoder-Python-34B-V1.0",
-                                 "llama-2-13b-code-alpaca", "meta-llama/Meta-Llama-3-8B-Instruct", "lightblue/suzume-llama-3-8B-japanese", "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf",
-                                 "WizardLMTeam/WizardLM-13B-V1.0", "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca",])
+                        choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1",
+                                 "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
+                                 "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
+                                 "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf"])
+
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp"])
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--end_index", type=int, default=sys.maxsize)
@@ -626,7 +583,6 @@ if __name__ == "__main__":
     parser.add_argument("--weight_mask_rate", type=float, default=0.1, help="weight mask rate")
     parser.add_argument("--use_weight_rescale", action="store_true", default=False, help="whether to rescale the weight by 1 / (1 - weight_mask_rate)")
     parser.add_argument("--mask_strategy", type=str, help="mask strategy", default="random", choices=["random", "magnitude"])
-    parser.add_argument("--wizardcoder_use_llama2_as_backbone", action="store_true", default=False, help="whether to use llama-2 as the backbone for WizardCoder")
     parser.add_argument("--prompt_type", default="zeroshot", help="waht type of promt to use, zeroshot, fewshot, cot")
     parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
 
@@ -646,14 +602,7 @@ if __name__ == "__main__":
             save_model_name = f"{save_model_name}_strategy_{args.mask_strategy}"
         if args.weight_format == "finetuned_weight":
             save_model_name = f"{save_model_name}_weight_format_{args.weight_format}"
-        if args.wizardcoder_use_llama2_as_backbone:
-            assert args.finetuned_model_name in ["WizardCoder-Python-7B-V1.0", "WizardCoder-Python-13B-V1.0"]
-            if args.finetuned_model_name == "WizardCoder-Python-7B-V1.0":
-                finetuned_model_backbone_mapping_dict["WizardCoder-Python-7B-V1.0"] = "Llama-2-7b-hf"
-            else:
-                finetuned_model_backbone_mapping_dict["WizardCoder-Python-13B-V1.0"] = "Llama-2-13b-hf"
-            save_model_name = f"{save_model_name}_llama_2_as_backbone"
-        #save_model_path = f"./save_models/{args.dataset_name}/{save_model_name}"
+
         save_model_path = f"/scratch/acf15429bz/model_merge/save_models/{args.dataset_name}/{save_model_name}"
         just_inference = False
     if args.dataset_name == "alpaca_eval":
@@ -662,6 +611,7 @@ if __name__ == "__main__":
         save_gen_results_folder = f"{cache_dir}/save_gen_codes_results/{args.dataset_name}/{save_model_name}"
     else:
         save_gen_results_folder = None
+        
     # set up logger
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger()
@@ -684,22 +634,12 @@ if __name__ == "__main__":
     run_start_time = time.time()
     logger.info(f"********** Run starts. **********")
     logger.info(f"configuration is {args}")
-
-    if args.finetuned_model_name == "WizardLM-7B-V1.0":
-        # add the pretrained llama-7b-hf weights to recover WizardLM-7B-V1.0
-        recovered_model_save_path = os.path.join(cache_dir, f"{args.finetuned_model_name}-recovered")
-        if not os.path.exists(recovered_model_save_path):
-            recover_from_pretrained_model(finetuned_model_name=args.finetuned_model_name,
-                                          pretrained_model_name=finetuned_model_backbone_mapping_dict[args.finetuned_model_name],
-                                          args=args, logger=logger, recovered_model_save_path=recovered_model_save_path,
-                                          recover_manner="add")
-        args.finetuned_model_name = f"{args.finetuned_model_name}-recovered"
-
+    
     llm = create_llm(finetuned_model_name=args.finetuned_model_name,
                      pretrained_model_name=finetuned_model_backbone_mapping_dict[args.finetuned_model_name],
                      args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                      just_inference=just_inference, save_model_path=save_model_path)
-
+    
     if args.dataset_name == "alpaca_eval":
         test_alpaca_eval(llm=llm, finetuned_model_name=args.finetuned_model_name,
                          args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
@@ -723,6 +663,7 @@ if __name__ == "__main__":
         test_mbpp(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index,
                   save_model_path=save_model_path, save_gen_results_folder=save_gen_results_folder)
+
     logger.info(f"inference of {args.finetuned_model_name} is completed")
 
     sys.exit()
