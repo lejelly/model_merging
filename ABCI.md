@@ -1,5 +1,4 @@
 # Quik Start
-We don't use Singurality.
 ## Set Up for ABCI
 Creation of a virtual environment: work
 ```
