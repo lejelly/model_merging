@@ -133,3 +133,6 @@ work/*
 results/*
 logs/*
 tmp.*
+
+logs_*
+log_*

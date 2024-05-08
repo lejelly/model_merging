@@ -12,9 +12,9 @@ SCRIPT_TYPE=withoutDARE
 for MODEL in ${MODEL_SETS[@]}
 do
     PROMPT=zeroshotcot
-    qsub -g gcb50389 -N logs/zero_few_shot_cot/${SCRIPT_TYPE}.${MODEL}.${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT 
+    qsub -g gcb50389 -N log_cot_${SCRIPT_TYPE}_${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT 
     PROMPT=fewshotcot
-    qsub -g gcb50389 -N logs/zero_few_shot_cot/${SCRIPT_TYPE}.${MODEL}.${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT
+    qsub -g gcb50389 -N logs_cot_${SCRIPT_TYPE}_${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT
 done
 
 ######################################################################
@@ -25,14 +25,14 @@ for DROP_RATE in ${DROP_RATES[@]}
 do
     ## Drop Only #####################################################
     SCRIPT_TYPE=dropOnly
-    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
+    qsub -g gcb50389 -N log_${SCRIPT_TYPE}_${DROP_RATE}_wizardMath scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
     ## Magnitude-Based Pruning #######################################
     SCRIPT_TYPE=magnitude
-    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE
+    qsub -g gcb50389 -N log_${SCRIPT_TYPE}_${DROP_RATE}_wizardMath scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
     ## Masking Fine-Tuned Parameters #################################
     SCRIPT_TYPE=finetuned
-    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
+    qsub -g gcb50389 -N log_${SCRIPT_TYPE}_${DROP_RATE}_wizardMath scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
     ## DARE ##########################################################
     SCRIPT_TYPE=dare
-    qsub -g gcb50389 -N logs/drop_rate/${SCRIPT_TYPE}.${DROP_RATE}.${$MODEL_NAME} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
+    qsub -g gcb50389 -N log_${SCRIPT_TYPE}_${DROP_RATE}_wizardMath scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
 done
