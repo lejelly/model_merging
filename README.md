@@ -8,18 +8,23 @@
 You can add models in `merge_llms_instruct_math_code.py` and `inference_llms_instruct_math_code`. 
 
 ## BASE MODEL
-**Llama 2 base**
+**Llama 2**
 - [meta-llama/Llama-2-7b-hf](https://huggingface.co/meta-llama/Llama-2-7b-hf)
-- [codellama/CodeLlama-7b-hf](https://huggingface.co/codellama/CodeLlama-7b-hf)
 - [meta-llama/Llama-2-13b-hf](https://huggingface.co/meta-llama/Llama-2-13b-hf)
 
-**Llama 3 base**
+**Llama 3**
 - [meta-llama/Meta-Llama-3-8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B)
+
+**Mistral**
+- [mistralai/Mistral-7B-v0.1](https://huggingface.co/mistralai/Mistral-7B-v0.1)
+
 
 ## FINE-TUNED MODEL
 **Llama 2 base**
 - [EleutherAI/llemma_7b](https://huggingface.co/EleutherAI/llemma_7b)
 - [meta-llama/CodeLlama-7b-hf](https://huggingface.co/meta-llama/CodeLlama-7b-hf)
+- [meta-llama/CodeLlama-13b-hf](https://huggingface.co/meta-llama/CodeLlama-13b-hf)
+- [meta-llama/CodeLlama-7b-Python-hf](https://huggingface.co/meta-llama/CodeLlama-7b-Python-hf)
 - [layoric/llama-2-13b-code-alpaca](https://huggingface.co/layoric/llama-2-13b-code-alpaca)
 - [WizardLMTeam/WizardLM-13B-V1.0](https://huggingface.co/WizardLMTeam/WizardLM-13B-V1.0)
 - [Xwin-LM/Xwin-Math-13B-V1.0](https://huggingface.co/Xwin-LM/Xwin-Math-13B-V1.0)
@@ -27,7 +32,13 @@ You can add models in `merge_llms_instruct_math_code.py` and `inference_llms_ins
 **Llama 3 base**
 - [meta-llama/Meta-Llama-3-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct)
 - [lightblue/suzume-llama-3-8B-japanese](https://huggingface.co/lightblue/suzume-llama-3-8B-japanese)
+- [rinna/llama-3-youko-8b](https://huggingface.co/rinna/llama-3-youko-8b)
 
+**Mistral-7-v0.1 base**
+- [WizardLMTeam/WizardMath-7B-V1.1](https://huggingface.co/WizardLMTeam/WizardMath-7B-V1.1)
+- [augmxnt/shisa-gamma-7b-v1](https://huggingface.co/augmxnt/shisa-gamma-7b-v1)
+- [GAIR/Abel-7B-002](https://huggingface.co/GAIR/Abel-7B-002)
+- [tokyotech-llm/Swallow-MS-7b-v0.1](https://huggingface.co/tokyotech-llm/Swallow-MS-7b-v0.1)
 
 # Quick start
 ```

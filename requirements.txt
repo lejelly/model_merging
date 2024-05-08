@@ -9,4 +9,4 @@ accelerate
 jsonlines
 fraction
 ninja
-flash-attn --no-build-isolation
+flash-attn
