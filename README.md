@@ -39,6 +39,7 @@ You can add models in `merge_llms_instruct_math_code.py` and `inference_llms_ins
 - [augmxnt/shisa-gamma-7b-v1](https://huggingface.co/augmxnt/shisa-gamma-7b-v1)
 - [GAIR/Abel-7B-002](https://huggingface.co/GAIR/Abel-7B-002)
 - [tokyotech-llm/Swallow-MS-7b-v0.1](https://huggingface.co/tokyotech-llm/Swallow-MS-7b-v0.1)
+- [BioMistral/BioMistral-7B](https://huggingface.co/BioMistral/BioMistral-7B)
 
 # Quick start
 ```
