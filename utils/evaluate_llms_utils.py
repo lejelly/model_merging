@@ -29,7 +29,7 @@ def extract_answer_number(completion):
                 denominator = match.group().split('/')[1]
                 numerator = match.group().split('/')[0]
                 if is_number(denominator) == True and is_number(numerator) == True:
-                    if denominator == '0':
+                    if denominator == '0' or abs(float(denominator)) == float('inf'):
                         return round(float(numerator.replace(',', '')))
                     else:
                         frac = Fraction(match.group().replace(',', ''))

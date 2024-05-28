@@ -14,16 +14,16 @@ from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test
 from utils.load_config import cache_dir
 
 task_model_mapping_dict = {
-    "instruct": "WizardLMTeam/WizardLM-13B-V1.0",
-    "math": "Xwin-LM/Xwin-Math-13B-V1.0",
-    "code": "layoric/llama-2-13b-code-alpaca",
+    "jp": "tokyotech-llm/Swallow-MS-7b-v0.1",
+    "math1": "WizardLMTeam/WizardMath-7B-V1.1",
+    "math2": "GAIR/Abel-7B-002",
 }
 finetuned_model_backbone_mapping_dict = {
-    "WizardLMTeam/WizardLM-13B-V1.0": "meta-llama/Llama-2-13b-hf",
-    "Xwin-LM/Xwin-Math-13B-V1.0": "meta-llama/Llama-2-13b-hf",
-    "layoric/llama-2-13b-code-alpaca": "meta-llama/Llama-2-13b-hf",
+    "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
+    "augmxnt/shisa-gamma-7b-v1": "mistralai/Mistral-7B-v0.1",
+    "GAIR/Abel-7B-002": "mistralai/Mistral-7B-v0.1",
+    "tokyotech-llm/Swallow-MS-7b-v0.1": "mistralai/Mistral-7B-v0.1",
 }
-
 
 def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list, merge_task_names: list, models_to_merge: list, trainers: list, logger: logging.Logger,
                           merging_method: MergingMethod, tokenizers: list):
@@ -98,16 +98,16 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                    mask_apply_method=args.mask_apply_method,
                                                    models_use_deepcopy=False)
 
-    save_instruct_model_path = save_math_model_path = save_code_model_path = None
-    if args.merge_instruct:
-        save_instruct_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/instruct/{args.save_model_name}"
-    if args.merge_math:
-        save_math_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math/{args.save_model_name}"
-    if args.merge_code:
-        save_code_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/code/{args.save_model_name}"
+    save_jp_model_path = save_math1_model_path = save_math2_model_path = None
+    if args.merge_jp:
+        save_jp_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/jp/{args.save_model_name}"
+    if args.merge_math1:
+        save_math1_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math1/{args.save_model_name}"
+    if args.merge_math2:
+        save_math2_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math2/{args.save_model_name}"
 
     # since the tokenizers of different tasks are different, we need to save them (together with the model) separately
-    save_model_paths = [save_instruct_model_path, save_math_model_path, save_code_model_path]
+    save_model_paths = [save_jp_model_path, save_math1_model_path, save_math2_model_path]
     index = 0
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -118,6 +118,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     logger.info(f"models are saved")
     del merged_model, tokenizers
 
+    '''
     if save_instruct_model_path is not None:
         logger.info(f"evaluating merged model on instruct task...")
         llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,
@@ -153,6 +154,41 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         test_mbpp(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index,
                   save_model_path=None, save_gen_results_folder=save_gen_results_folder)
+    '''
+    
+    if save_jp_model_path is not None:
+        logger.info(f"evaluating merged model on math task...")
+        llm = create_llm(finetuned_model_name=save_jp_model_path, pretrained_model_name=args.pretrained_model_name,
+                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                            just_inference=True, save_model_path=None)
+        test_data_path = "math_code_data/gsm8k_test.jsonl"
+        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                    start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+    elif save_math1_model_path is not None:
+        logger.info(f"evaluating merged model on math task...")
+        llm = create_llm(finetuned_model_name=save_math1_model_path, pretrained_model_name=args.pretrained_model_name,
+                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                            just_inference=True, save_model_path=None)
+        test_data_path = "math_code_data/gsm8k_test.jsonl"
+        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                    start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+    elif save_math2_model_path is not None:
+        logger.info(f"evaluating merged model on math task...")
+        llm = create_llm(finetuned_model_name=save_math2_model_path, pretrained_model_name=args.pretrained_model_name,
+                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                            just_inference=True, save_model_path=None)
+        test_data_path = "math_code_data/gsm8k_test.jsonl"
+        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                    start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
 
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -190,10 +226,10 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    assert sum([args.merge_instruct, args.merge_math, args.merge_code]) >= 2, "should merge two tasks at least!"
+    assert sum([args.merge_jp, args.merge_math1, args.merge_math2]) >= 2, "should merge two tasks at least!"
     finetuned_model_names = []
     merge_task_names = []
-    for merge_flag, task_name in zip([args.merge_instruct, args.merge_math, args.merge_code], ["instruct", "math", "code"]):
+    for merge_flag, task_name in zip([args.merge_jp, args.merge_math1, args.merge_math2], ["jp", "math1", "math2"]):
         if merge_flag:
             finetuned_model_names.append(task_model_mapping_dict[task_name])
             merge_task_names.append(task_name)

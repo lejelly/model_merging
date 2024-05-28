@@ -17,4 +17,4 @@ SCRIPT_TYPE=finetuned
 qsub -g gcb50389 -N log.${SCRIPT_TYPE} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
 ## DARE #####################################################
 SCRIPT_TYPE=dare 
-qsub -g gcb50389 -N log.${SCRIPT_TYPE} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE  
+qsub -g gcb50389 -N log.${SCRIPT_TYPE} scripts/${SCRIPT_TYPE}.sh $MODEL_NAME $PROMPT $DROP_RATE   
