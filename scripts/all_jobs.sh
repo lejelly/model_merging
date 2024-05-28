@@ -14,7 +14,7 @@ do
     PROMPT=zeroshotcot
     qsub -g gcb50389 -N log_cot_${SCRIPT_TYPE}_${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT 
     PROMPT=fewshotcot
-    qsub -g gcb50389 -N logs_cot_${SCRIPT_TYPE}_${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT
+    qsub -g gcb50389 -N log_cot_${SCRIPT_TYPE}_${PROMPT} scripts/${SCRIPT_TYPE}.sh $MODEL $PROMPT
 done
 
 ######################################################################
