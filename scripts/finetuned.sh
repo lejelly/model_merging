@@ -1,6 +1,6 @@
 #!/bin/bash
 #$ -l rt_AF=1
-#$ -l h_rt=0:30:00
+#$ -l h_rt=0:20:00
 #$ -j y
 #$ -cwd
 
