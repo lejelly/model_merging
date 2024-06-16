@@ -125,6 +125,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     del merged_model, tokenizers
 
     '''
+    '''
     if save_instruct_model_path is not None:
         logger.info(f"evaluating merged model on instruct task...")
         llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,

@@ -1,6 +1,6 @@
 #!/bin/bash
 #$ -l rt_AF=1
-#$ -l h_rt=0:30:00
+#$ -l h_rt=0:20:00
 #$ -j y
 #$ -cwd
 
@@ -8,7 +8,8 @@ MODEL_NAME=$1
 PROMPT_TYPE=$2
 DROP_RATE=$3
 DATASET=gsm8k
-COMP_FILE_PATH=./results/single_model_inference/${PROMPT_TYPE}/gsm8k_dare_${MODEL_NAME}.txt
+#COMP_FILE_PATH=./results/single_model_inference/${PROMPT_TYPE}/gsm8k_dare_${MODEL_NAME}.txt
+COMP_FILE_PATH=None
 
 # module load
 source import-env.sh .env
