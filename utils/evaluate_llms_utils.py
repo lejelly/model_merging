@@ -73,7 +73,7 @@ def remove_boxed(s):
 
 
 def process_results(doc, completion, answer, invalid_outputs):
-    split_ans = completion.split('The answer is ')
+    split_ans = completion.split('The answer is: ')
     if len(split_ans) > 1:
         ans = split_ans[-1]
         extract_ans_temp = ans.split('.\n')[0]
