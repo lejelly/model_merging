@@ -125,7 +125,6 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     del merged_model, tokenizers
 
     '''
-    '''
     if save_instruct_model_path is not None:
         logger.info(f"evaluating merged model on instruct task...")
         llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,
@@ -162,7 +161,6 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                   start_index=args.start_index, end_index=args.end_index,
                   save_model_path=None, save_gen_results_folder=save_gen_results_folder)
     '''
-    
     if save_jp_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
         llm = create_llm(finetuned_model_name=save_jp_model_path, pretrained_model_name=args.pretrained_model_name,
@@ -200,7 +198,6 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         if save_model_path is not None:
             shutil.rmtree(save_model_path, ignore_errors=True)
     logger.info(f"inference of merging method {args.merging_method_name} is completed")
-
 
 parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_jp", action="store_true", default=False, help="whether to merge instruct model")
@@ -245,7 +242,9 @@ if __name__ == "__main__":
     pretrained_model_names = [finetuned_model_backbone_mapping_dict[finetuned_model_name] for finetuned_model_name in finetuned_model_names]
     assert len(set(pretrained_model_names)) == 1, "the backbone of all the finetuned models should be the same!"
     args.pretrained_model_name = pretrained_model_names[0]
-    args.weight_mask_rates = [args.weight_mask_rate for _ in range(len(finetuned_model_names))]
+    # optimize the weight_mask_rates
+    #args.weight_mask_rates = [args.weight_mask_rate for _ in range(len(finetuned_model_names))]
+    args.weight_mask_rates = [0.1, 0.8]
 
     if args.merging_method_name == "average_merging":
         args.save_model_name = f"{args.merging_method_name}"
@@ -260,7 +259,7 @@ if __name__ == "__main__":
             mask_apply_method_name = f"{args.mask_apply_method}_scaling_coefficient_{args.scaling_coefficient}"
         weight_mask_rates = [str(weight_mask_rate) for weight_mask_rate in args.weight_mask_rates]
         args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}"
-
+        
     save_merge_log_path = f"./save_merge_llm_logs/{'_'.join(merge_task_names)}/{args.save_model_name}"
     os.makedirs(save_merge_log_path, exist_ok=True)
     # create file handler that logs debug and higher level messages
