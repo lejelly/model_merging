@@ -290,12 +290,6 @@ def get_math_task_prompt(prompt_type=None):
     zeroshotcot =(
         "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. ASSISTANT: "
     )
-    
-    zeroshotcot_math = (
-        "Below is an instruction that describes a task. "
-        "Write a response that appropriately completes the request.\n\n"
-        "### Instruction:\n{instruction}\n\n### Response: Let's think step by step."
-    )
 
     fewshotcot = (
         "A chat between a curious user and an artificial intelligence assistant.The assistant gives helpful, detailed, and polite answers to the user's questions. Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. \n"        
@@ -341,8 +335,6 @@ def get_math_task_prompt(prompt_type=None):
     
     if prompt_type=="zeroshotcot":
         return zeroshotcot
-    elif prompt_type=="zeroshotcot_math":
-        return zeroshotcot_math
     return fewshotcot
 
 
