@@ -4,6 +4,7 @@ import sys
 import shutil
 import logging
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import time
 from tqdm import tqdm
 import glob
@@ -273,10 +274,10 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
     
 
 
-def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None):
+def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, prompt_type=None, comp_file_path=None, model_name=None, drop_rate=None):
     hendrycks_math_ins = []
     hendrycks_math_answers = []
-    problem_prompt = get_math_task_prompt()
+    problem_prompt = get_math_task_prompt(prompt_type)
     logger.info(f"MATH test prompt is {problem_prompt}")
     with open(test_data_path, "r+", encoding="utf8") as f:
         for idx, item in enumerate(jsonlines.Reader(f)):
@@ -317,6 +318,10 @@ def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start
     logger.info(args)
     if save_model_path is not None:
         shutil.rmtree(save_model_path, ignore_errors=True)
+
+    if comp_file_path is not None:
+        result_message = f"accuracy: {accuracy}, drop_rate: {drop_rate}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
+        output_to_comparefile(comp_file_path, result_message)
 
     del llm
     torch.cuda.empty_cache()
@@ -584,7 +589,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight_mask_rate", type=float, default=0.1, help="weight mask rate")
     parser.add_argument("--use_weight_rescale", action="store_true", default=False, help="whether to rescale the weight by 1 / (1 - weight_mask_rate)")
     parser.add_argument("--mask_strategy", type=str, help="mask strategy", default="random", choices=["random", "magnitude"])
-    parser.add_argument("--prompt_type", default="zeroshot", help="waht type of promt to use, zeroshot, fewshot, cot")
+    parser.add_argument("--prompt_type", default="zeroshotcot", help="waht type of promt to use, zeroshot, fewshot, cot")
     parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
 
     try:
@@ -654,10 +659,12 @@ if __name__ == "__main__":
     elif args.dataset_name == "MATH":
         args.test_data_path = "math_code_data/MATH_test.jsonl"
         test_hendrycks_math(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                            start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path)
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path, prompt_type=args.prompt_type, comp_file_path=args.comp_file_path, model_name=args.finetuned_model_name, drop_rate=args.weight_mask_rate)
+    
     elif args.dataset_name == "human_eval":
         test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
                         save_model_path=save_model_path, save_gen_results_folder=save_gen_results_folder)
+    
     else:
         assert args.dataset_name == "mbpp"
         args.test_data_path = "math_code_data/mbpp.test.jsonl"

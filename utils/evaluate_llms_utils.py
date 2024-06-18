@@ -73,7 +73,7 @@ def remove_boxed(s):
 
 
 def process_results(doc, completion, answer, invalid_outputs):
-    split_ans = completion.split('The answer is ')
+    split_ans = completion.split('The answer is: ')
     if len(split_ans) > 1:
         ans = split_ans[-1]
         extract_ans_temp = ans.split('.\n')[0]
@@ -286,7 +286,7 @@ def generate_instruction_following_task_prompt(instruction, is_chat_model=True):
 """
     return prompt
 
-def get_math_task_prompt(prompt_type=None):
+def get_math_task_prompt(prompt_type="zeroshotcot"):
     zeroshotcot =(
         "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. ASSISTANT: "
     )
@@ -333,9 +333,9 @@ def get_math_task_prompt(prompt_type=None):
         "ASSISTANT: "
     )
     
-    if prompt_type=="zeroshotcot":
-        return zeroshotcot
-    return fewshotcot
+    if prompt_type=="fewshotcot":
+        return fewshotcot
+    return zeroshotcot
 
 
 def generate_code_task_prompt(input_text):
