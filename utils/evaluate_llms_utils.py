@@ -333,9 +333,9 @@ def get_math_task_prompt(prompt_type=None):
         "ASSISTANT: "
     )
     
-    if prompt_type=="zeroshotcot":
-        return zeroshotcot
-    return fewshotcot
+    if prompt_type=="fewshotcot":
+        return fewshotcot
+    return zeroshotcot
 
 
 def generate_code_task_prompt(input_text):
