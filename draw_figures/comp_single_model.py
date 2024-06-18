@@ -1,12 +1,14 @@
 import re
 import os
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import argparse
 
 def draw(MODEL_NAME, METHOD_NAME):
     # Path to the uploaded text file
-    file_path = f'/home/acf15429bz/model_merging/model_merging/results/single_model_inference/zeroshotcot/gsm8k_{METHOD_NAME}_{MODEL_NAME}.txt'
-    fig_name = f'/home/acf15429bz/model_merging/model_merging/figs/gsm8k_{MODEL_NAME}_{METHOD_NAME}.png'
+    file_path = f'/p-shared-11/model_merging/results/single_model_inference/zeroshotcot/gsm8k_{METHOD_NAME}_{MODEL_NAME}.txt'
+    fig_name = f'/p-shared-11/model_merging/figs/gsm8k_{MODEL_NAME}_{METHOD_NAME}.png'
     os.makedirs(os.path.dirname(fig_name), exist_ok=True)
 
     # Lists to store the extracted accuracy and drop rate values
@@ -25,7 +27,7 @@ def draw(MODEL_NAME, METHOD_NAME):
             if accuracy_match and drop_rate_match:
                 accuracies.append(float(accuracy_match.group(1)))
                 drop_rates.append(float(drop_rate_match.group(1)))
-
+    
     # Revise METHOD_NAME
     if METHOD_NAME=='dare':
         METHOD_NAME=='<DARE>'
@@ -38,7 +40,7 @@ def draw(MODEL_NAME, METHOD_NAME):
 
     # Create the plot
     plt.figure(figsize=(10, 6))
-    plt.plot(drop_rates, accuracies, 'o-', label=MODEL_NAME, color='blue')
+    plt.plot(drop_rates, accuracies, 'o-', label=MODEL_NAME, color='purple')
     plt.xlabel('Drop Rate')
     plt.ylabel('Accuracy (%)')
     plt.title(f'Performance on GSM8K w/{METHOD_NAME}')
@@ -51,7 +53,7 @@ def draw(MODEL_NAME, METHOD_NAME):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002", "tokyotech-llm/Swallow-MS-7b-v0.1"])
+    parser.add_argument("--model_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002", "tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B"])
     parser.add_argument("--method_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["dare", "droponly", "finetuned", "magnitude"])
     args = parser.parse_args()
     
