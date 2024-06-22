@@ -27,6 +27,7 @@ finetuned_model_backbone_mapping_dict = {
     "GAIR/Abel-7B-002": "mistralai/Mistral-7B-v0.1",
     "tokyotech-llm/Swallow-MS-7b-v0.1": "mistralai/Mistral-7B-v0.1",
     "BioMistral/BioMistral-7B": "mistralai/Mistral-7B-v0.1",
+    "upaya07/Arithmo2-Mistral-7B": "mistralai/Mistral-7B-v0.1",
     
     "rinna/llama-3-youko-8b": "meta-llama/Meta-Llama-3-8B",
     "rombodawg/Llama-3-8B-Instruct-Coder-v2": "meta-llama/Meta-Llama-3-8B",
@@ -87,10 +88,10 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
 def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size)
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.9)
         else:
             #assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size)
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.9)
         assert save_model_path is None
     else:
         try:
@@ -103,33 +104,6 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir)
             finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir)
-
-        # set the pad_token of pretrained and finetuned tokenizer
-        # note that WizardMath-70B-V1.0 adds two tokens {"<pad>": 32000, "[PAD]": 32001} with (32002, 8192) token embedding size
-        # therefore, for WizardMath-70B-V1.0, we add one distinct pad_token "<pad>[PAD]" to reshape the token embedding size to (32001, 8192)
-
-        if "WizardMath-70B-V1.0" in finetuned_model_name:
-            smart_tokenizer_and_embedding_resize(
-                special_tokens_dict=dict(pad_token="<pad>[PAD]"),
-                model=pretrained_model,
-                tokenizer=pretrained_tokenizer,
-            )
-            smart_tokenizer_and_embedding_resize(
-                special_tokens_dict=dict(pad_token="<pad>[PAD]"),
-                model=finetuned_model,
-                tokenizer=finetuned_tokenizer,
-            )
-        else:
-            smart_tokenizer_and_embedding_resize(
-                special_tokens_dict=dict(pad_token="[PAD]"),
-                model=pretrained_model,
-                tokenizer=pretrained_tokenizer,
-            )
-            smart_tokenizer_and_embedding_resize(
-                special_tokens_dict=dict(pad_token="[PAD]"),
-                model=finetuned_model,
-                tokenizer=finetuned_tokenizer,
-            )
 
         # set random seed to guarantee reproducibility
         set_random_seed(seed=0)
@@ -148,7 +122,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         finetuned_model.save_pretrained(save_directory=save_model_path)
         finetuned_tokenizer.save_pretrained(save_directory=save_model_path)
         logger.info(f"model is saved")
-        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='float16')
+        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.9)
 
     return llm
 
@@ -571,7 +545,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("Interface for inference LLMs")
     parser.add_argument("--finetuned_model_name", type=str, default="WizardLM-13B-V1.2", help="name of the finetuned language model",
-                        choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B",
+                        choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B", "upaya07/Arithmo2-Mistral-7B",
                                  "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
                                  "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
                                  "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf"])
@@ -655,11 +629,20 @@ if __name__ == "__main__":
         args.test_data_path = "math_code_data/MATH_test.jsonl"
         test_hendrycks_math(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                             start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path)
+        
     elif args.dataset_name == "human_eval":
         test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
                         save_model_path=save_model_path, save_gen_results_folder=save_gen_results_folder)
+        
     else:
         assert args.dataset_name == "mbpp"
+        args.test_data_path = "math_code_data/mbpp.test.jsonl"
+        test_mbpp(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
+                  start_index=args.start_index, end_index=args.end_index,
+                  save_model_path=save_model_path, save_gen_results_folder=save_gen_results_folder)
+    
+    else:
+        assert args.dataset_name == "mgsm-ja"
         args.test_data_path = "math_code_data/mbpp.test.jsonl"
         test_mbpp(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index,
