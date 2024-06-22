@@ -129,7 +129,7 @@ models--*
 .locks
 figures
 
-work/*
+work
 results/*
 logs/*
 tmp.*

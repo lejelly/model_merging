@@ -15,11 +15,11 @@ from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test
 from utils.load_config import cache_dir
 
 task_model_mapping_dict = {
-    #"jp": "tokyotech-llm/Swallow-MS-7b-v0.1",
     "jp": "augmxnt/shisa-gamma-7b-v1",
     "bio": "BioMistral/BioMistral-7B",
     "math1": "WizardLMTeam/WizardMath-7B-V1.1",
     "math2": "GAIR/Abel-7B-002",
+    "math3": "upaya07/Arithmo2-Mistral-7B",
 }
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -27,6 +27,7 @@ finetuned_model_backbone_mapping_dict = {
     "GAIR/Abel-7B-002": "mistralai/Mistral-7B-v0.1",
     "tokyotech-llm/Swallow-MS-7b-v0.1": "mistralai/Mistral-7B-v0.1",
     "BioMistral/BioMistral-7B": "mistralai/Mistral-7B-v0.1",
+    "upaya07/Arithmo2-Mistral-7B": "mistralai/Mistral-7B-v0.1",
 }
 
 def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list, merge_task_names: list, models_to_merge: list, trainers: list, logger: logging.Logger,
