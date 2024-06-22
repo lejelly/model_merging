@@ -40,7 +40,7 @@ def draw(MODEL_NAME, METHOD_NAME):
 
     # Create the plot
     plt.figure(figsize=(10, 6))
-    plt.plot(drop_rates, accuracies, 'o-', label=MODEL_NAME, color='purple')
+    plt.plot(drop_rates, accuracies, 'o-', label=MODEL_NAME, color='red')
     plt.xlabel('Drop Rate')
     plt.ylabel('Accuracy (%)')
     plt.title(f'Performance on GSM8K w/{METHOD_NAME}')

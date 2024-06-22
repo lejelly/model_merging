@@ -4,7 +4,7 @@ import sys
 import shutil
 import logging
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import time
 from tqdm import tqdm
 import glob
@@ -88,10 +88,10 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
 def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.45)
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.5)
         else:
             #assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.45)
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.5)
         assert save_model_path is None
     else:
         try:
@@ -149,7 +149,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         finetuned_model.save_pretrained(save_directory=save_model_path)
         finetuned_tokenizer.save_pretrained(save_directory=save_model_path)
         logger.info(f"model is saved")
-        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.45)
+        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.5)
 
     return llm
 

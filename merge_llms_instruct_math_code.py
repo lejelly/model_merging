@@ -166,33 +166,45 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         llm = create_llm(finetuned_model_name=save_jp_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
-        test_data_path = "math_code_data/gsm8k_test.jsonl"
-        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                    start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        #test_data_path = "math_code_data/gsm8k_test.jsonl"
+        #test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+        #            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
     elif save_bio_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
         llm = create_llm(finetuned_model_name=save_bio_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
-        test_data_path = "math_code_data/gsm8k_test.jsonl"
-        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                    start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        #test_data_path = "math_code_data/gsm8k_test.jsonl"
+        #test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+        #            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
     elif save_math1_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
         llm = create_llm(finetuned_model_name=save_math1_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
-        test_data_path = "math_code_data/gsm8k_test.jsonl"
-        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                    start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        #test_data_path = "math_code_data/gsm8k_test.jsonl"
+        #test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+        #            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
     elif save_math2_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
         llm = create_llm(finetuned_model_name=save_math2_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
-        test_data_path = "math_code_data/gsm8k_test.jsonl"
-        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                    start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        #test_data_path = "math_code_data/gsm8k_test.jsonl"
+        #test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+        #            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
 
     for save_model_path in save_model_paths:
         if save_model_path is not None:
