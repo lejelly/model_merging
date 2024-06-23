@@ -7,6 +7,6 @@ numpy
 tqdm
 accelerate
 jsonlines
-fraction
+Fraction
 ninja
 flash-attn
