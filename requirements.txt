@@ -10,3 +10,4 @@ jsonlines
 Fraction
 ninja
 flash-attn
+fasttext

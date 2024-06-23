@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import transformers
 from transformers import Trainer, TrainerState
+from fasttext.FastText import _FastText
 
 
 def set_random_seed(seed: int = 0):
@@ -108,7 +109,7 @@ def smart_tokenizer_and_embedding_resize(
         output_embeddings[-num_new_tokens:] = output_embeddings_avg
 
 class LanguageDetector:
-    def __init__(self, model):
+    def __init__(self):
         model_path = os.environ.get("LID176FTZ_PATH", "lid.176.ftz")
         self.model = _FastText(model_path)
 

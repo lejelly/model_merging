@@ -17,7 +17,7 @@ from human_eval.data import write_jsonl, read_problems, stream_jsonl
 from model_merging_methods.mask_weights_utils import mask_model_weights
 from utils.utils import set_random_seed, smart_tokenizer_and_embedding_resize
 from utils.evaluate_llms_utils import batch_data, extract_answer_number, extract_answer_number_for_ja_mgsm, compute_score_for_ja_mgsm, remove_boxed, last_boxed_only_string, process_results, \
-    generate_instruction_following_task_prompt, get_math_task_prompt, generate_code_task_prompt, read_mbpp
+    generate_instruction_following_task_prompt, get_math_task_prompt, get_ja_math_task_prompt, generate_code_task_prompt, read_mbpp
 from utils.load_config import cache_dir
 import transformers
 from utils.utils import LanguageDetector
@@ -89,10 +89,10 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
 def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.5)
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
         else:
             #assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.5)
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
         assert save_model_path is None
     else:
         try:
@@ -123,7 +123,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         finetuned_model.save_pretrained(save_directory=save_model_path)
         finetuned_tokenizer.save_pretrained(save_directory=save_model_path)
         logger.info(f"model is saved")
-        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.5)
+        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
 
     return llm
 
@@ -572,7 +572,7 @@ def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=
         "prediction": preds,
     }
     
-    res_dict, incorrect = compute_score_for_ja_mgsm
+    res_dict, incorrect = compute_score_for_ja_mgsm(results,lang_detect)
     acc = res_dict["acc"]
     try:
         acc_ja = res_dict["acc_ja"]
