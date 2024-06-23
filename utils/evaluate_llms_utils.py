@@ -47,6 +47,37 @@ def extract_answer_number(completion):
     else:
         return None
 
+def extract_answer_number_for_ja_mgsm(completion):
+    matches = re.findall(r"\d*\.?\d+", completion)
+    if not matches:
+        return None
+    text = matches[-1]
+    return float(text.replace(",", ""))
+
+def compute_score_for_ja_mgsm(results, lang_detect):
+    corrects = []
+    incorrect = []
+    for question, response, pred, answer in zip(results["question"], results["response"], results["prediction"], results["answer"]):
+        if answer == pred:
+            corrects.append(True)
+        else:
+            corrects.append(False)
+            incorrect.append({
+                "question": question,
+                "response": response,
+                "prediction": pred,
+                "answer": answer
+            })
+            
+    res_dict = {"acc": sum(corrects) / len(corrects)}
+    # detect Japanese by fasttext and replace empty string if it's not Ja
+    if lang_detect:
+        corrects_ja = []
+        for i, resp in enumerate(results["response"]):
+            res = lang_detect(resp)
+            corrects_ja.append(corrects[i] and res.get("__label__ja", 0.0) > 0.5)
+        res_dict["acc_ja"] = sum(corrects_ja) / len(corrects_ja)
+    return res_dict, incorrect
 
 def batch_data(data_list, batch_size=1):
     n = len(data_list) // batch_size
@@ -356,3 +387,12 @@ def read_mbpp(path):
         for obj in fin:
             mbpp_problems[obj["task_id"]] = obj
     return mbpp_problems
+
+def get_ja_math_task_prompt(input_text):
+    JA_ALPACA_COT_TEMPLATE = f"""以下に、あるタスクを説明する指示があります。リクエストを適切に完了するための回答を日本語で記述してください。一歩一歩考えましょう。
+
+### 指示:
+{input_text}
+
+### 応答:"""
+    return JA_ALPACA_COT_TEMPLATE

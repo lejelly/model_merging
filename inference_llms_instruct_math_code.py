@@ -16,10 +16,11 @@ from human_eval.data import write_jsonl, read_problems, stream_jsonl
 
 from model_merging_methods.mask_weights_utils import mask_model_weights
 from utils.utils import set_random_seed, smart_tokenizer_and_embedding_resize
-from utils.evaluate_llms_utils import batch_data, extract_answer_number, remove_boxed, last_boxed_only_string, process_results, \
+from utils.evaluate_llms_utils import batch_data, extract_answer_number, extract_answer_number_for_ja_mgsm, compute_score_for_ja_mgsm, remove_boxed, last_boxed_only_string, process_results, \
     generate_instruction_following_task_prompt, get_math_task_prompt, generate_code_task_prompt, read_mbpp
 from utils.load_config import cache_dir
 import transformers
+from utils.utils import LanguageDetector
 
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -88,10 +89,10 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
 def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.9)
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.5)
         else:
             #assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, gpu_memory_utilization=0.9)
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.5)
         assert save_model_path is None
     else:
         try:
@@ -122,7 +123,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         finetuned_model.save_pretrained(save_directory=save_model_path)
         finetuned_tokenizer.save_pretrained(save_directory=save_model_path)
         logger.info(f"model is saved")
-        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.9)
+        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='float16', gpu_memory_utilization=0.5)
 
     return llm
 
@@ -533,6 +534,63 @@ def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, 
     del llm
     torch.cuda.empty_cache()
 
+def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None):
+    try:
+        eval_set = datasets.load_dataset(path="juletxara/mgsm", split="test", name="ja")
+        eval_set = dataset.select_columns(["question", "answer_number"])
+    except:
+        logger.info("Can't load dataset!")
+    
+    lang_detect = LanguageDetector()
+
+    question = []
+    prompts = []
+    answers = []
+    for example in eval_set:
+        question.append(example["question"])
+        prompts.append(get_ja_math_task_prompt(input_text=example["question"]))
+        answers.append(example["answer_number"])
+        
+    prompts = prompts[start_index:end_index]
+    answers = answers[start_index:end_index]
+
+    stop_tokens = ["Instruction:", "Instruction", "Response:", "Response"]
+    sampling_params = SamplingParams(temperature=0, top_p=1.0, repetition_penalty=1.0, max_tokens=1024, stop=stop_tokens)
+    
+    logger.info(f"sampling params is {sampling_params}")
+
+    with torch.no_grad():
+        outputs = llm.generate(prompts=prompts, sampling_params=sampling_params)
+    
+    resps = [output.outputs[0].text for output in outputs]
+    preds = [extract_answer_number_for_ja_mgsm(t) for t in resps]
+    
+    results = {
+        "question": question,
+        "answer": answers,
+        "response": resps,
+        "prediction": preds,
+    }
+    
+    res_dict, incorrect = compute_score_for_ja_mgsm
+    acc = res_dict["acc"]
+    try:
+        acc_ja = res_dict["acc_ja"]
+    except:
+        acc_ja = '---'
+
+    logger.info(f"invalid outputs length is {len(incorrect)}, invalid_outputs are {incorrect}")
+    logger.info(f"data index starts from {start_index}, ends at {end_index}")
+    logger.info(f"ja_mgsm test data length is {len(results)}, accuracy is {acc}, accuracy_ja is {acc_ja}")
+    logger.info(args)
+
+    if comp_file_path is not None:
+        result_message = f"accuracy: {acc}, accuracy_ja: {acc_ja}, drop_rate: {drop_rate}, model_name: {model_name}, samplig_params: {sampling_params}"
+        output_to_comparefile(comp_file_path, result_message)
+        
+    del llm
+    torch.cuda.empty_cache()
+
 def output_to_comparefile(file_path, content):
     # if exist file, no->make it, yes->pass
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -550,7 +608,7 @@ if __name__ == "__main__":
                                  "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
                                  "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf"])
 
-    parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp"])
+    parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
     parser.add_argument("--start_index", type=int, default=0)
     parser.add_argument("--end_index", type=int, default=sys.maxsize)
     parser.add_argument("--tensor_parallel_size", type=int, default=1)
@@ -634,19 +692,18 @@ if __name__ == "__main__":
         test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
                         save_model_path=save_model_path, save_gen_results_folder=save_gen_results_folder)
         
-    else:
-        assert args.dataset_name == "mbpp"
+    elif args.dataset_name == "mbpp":
         args.test_data_path = "math_code_data/mbpp.test.jsonl"
         test_mbpp(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index,
                   save_model_path=save_model_path, save_gen_results_folder=save_gen_results_folder)
     
     else:
-        assert args.dataset_name == "mgsm-ja"
-        args.test_data_path = "math_code_data/mbpp.test.jsonl"
-        test_mbpp(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                  start_index=args.start_index, end_index=args.end_index,
-                  save_model_path=save_model_path, save_gen_results_folder=save_gen_results_folder)
+        assert args.dataset_name == "ja_mgsm"
+        args.test_data_path = "juletxara/mgsm"
+        test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
+                  start_index=args.start_index, end_index=args.end_index, 
+                  comp_file_path=args.comp_file_path, model_name=args.finetuned_model_name, drop_rate=args.weight_mask_rate)
 
     logger.info(f"inference of {args.finetuned_model_name} is completed")
 
