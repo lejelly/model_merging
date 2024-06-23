@@ -1,10 +1,15 @@
 #!/bin/bash
-#PJM -L rscgrp=short-a  
-#PJM -L node=1
+#PJM -L rscgrp=share-short
+#PJM -L gpu=1
 #PJM -L elapse=0:20:00
 #PJM -j
 
-MODEL_NAME=upaya07/Arithmo2-Mistral-7B
+#MODEL_NAME=WizardLMTeam/WizardMath-7B-V1.1
+#MODEL_NAME=augmxnt/shisa-gamma-7b-v1
+#MODEL_NAME=GAIR/Abel-7B-002
+#MODEL_NAME=tokyotech-llm/Swallow-MS-7b-v0.1
+#MODEL_NAME=upaya07/Arithmo2-Mistral-7B
+
 DATASET=ja_mgsm
 COMP_FILE_PATH=./results/single_model_inference/${DATASET}/without_DARE.txt
 

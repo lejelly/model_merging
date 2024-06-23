@@ -5,8 +5,8 @@ import argparse
 
 def draw(MODEL_NAME, METHOD_NAME):
     # Path to the uploaded text file
-    file_path = f'/home/acf15429bz/model_merging/model_merging/results/single_model_inference/zeroshotcot/gsm8k_{METHOD_NAME}_{MODEL_NAME}.txt'
-    fig_name = f'/home/acf15429bz/model_merging/model_merging/figs/gsm8k_{MODEL_NAME}_{METHOD_NAME}.png'
+    file_path = f'/work/gb20/b20042/model_merging/results/single_model_inference/zeroshotcot/gsm8k_{METHOD_NAME}_{MODEL_NAME}.txt'
+    fig_name = f'/work/gb20/b20042/model_merging/figs/gsm8k_{MODEL_NAME}_{METHOD_NAME}.png'
     os.makedirs(os.path.dirname(fig_name), exist_ok=True)
 
     # Lists to store the extracted accuracy and drop rate values

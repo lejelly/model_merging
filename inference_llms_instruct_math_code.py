@@ -537,7 +537,7 @@ def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, 
 def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None):
     try:
         eval_set = datasets.load_dataset(path="juletxara/mgsm", split="test", name="ja")
-        eval_set = dataset.select_columns(["question", "answer_number"])
+        eval_set = eval_set.select_columns(["question", "answer_number"])
     except:
         logger.info("Can't load dataset!")
     
@@ -572,14 +572,15 @@ def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=
         "prediction": preds,
     }
     
-    res_dict, incorrect = compute_score_for_ja_mgsm(results,lang_detect)
+    res_dict, incorrect, incorrects_ja = compute_score_for_ja_mgsm(results,lang_detect)
     acc = res_dict["acc"]
     try:
         acc_ja = res_dict["acc_ja"]
     except:
         acc_ja = '---'
 
-    logger.info(f"invalid outputs length is {len(incorrect)}, invalid_outputs are {incorrect}")
+    logger.info(f"acc: invalid outputs length is {len(incorrect)}, invalid_outputs are {incorrect}")
+    logger.info(f"acc-ja: invalid outputs length is {len(incorrects_ja)}, invalid_outputs are {incorrects_ja}")
     logger.info(f"data index starts from {start_index}, ends at {end_index}")
     logger.info(f"ja_mgsm test data length is {len(results)}, accuracy is {acc}, accuracy_ja is {acc_ja}")
     logger.info(args)
