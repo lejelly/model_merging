@@ -1,13 +1,13 @@
 #!/bin/bash
-#$ -l rt_AG.small=1
-#$ -l h_rt=0:20:00
+#$ -l rt_G.small=1
+#$ -l h_rt=0:30:00
 #$ -j y
 #$ -cwd
 
 MODEL_NAME=$1
-PROMPT_TYPE=$2
-DATASET=gsm8k
-COMP_FILE_PATH=./results/single_model_inference/${PROMPT_TYPE}/gsm8k_without_DARE.txt
+#PROMPT_TYPE=$2
+DATASET=ja_mgsm
+COMP_FILE_PATH=./results/single_model_inference/${DATASET}/without_DARE.txt
 
 # module load
 source import-env.sh .env
@@ -28,5 +28,5 @@ python inference_llms_instruct_math_code.py \
     --finetuned_model_name $MODEL_NAME \
     --tensor_parallel_size 1 \
     --weight_mask_rate 0.0 \
-    --comp_file_path $COMP_FILE_PATH \
-    --prompt_type $PROMPT_TYPE
+    --comp_file_path $COMP_FILE_PATH 
+#    --prompt_type $PROMPT_TYPE
