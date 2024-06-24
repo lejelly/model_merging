@@ -96,14 +96,14 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         assert save_model_path is None
     else:
         try:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.float16)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name))
-            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.float16)
+            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name))
         except:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir)
-            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
+            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir)
 
         # set random seed to guarantee reproducibility
@@ -618,6 +618,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_weight_rescale", action="store_true", default=False, help="whether to rescale the weight by 1 / (1 - weight_mask_rate)")
     parser.add_argument("--mask_strategy", type=str, help="mask strategy", default="random", choices=["random", "magnitude"])
     parser.add_argument("--prompt_type", default="zeroshot", help="waht type of promt to use, zeroshot, fewshot, cot")
+    parser.add_argument("--drop_method", default=None, help="waht type of drop out to use, withoutDARE, droponly, finetuned, magnitude, dare")
     parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
 
     try:
@@ -637,7 +638,7 @@ if __name__ == "__main__":
         if args.weight_format == "finetuned_weight":
             save_model_name = f"{save_model_name}_weight_format_{args.weight_format}"
 
-        save_model_path = f"/scratch/acf15429bz/model_merge/save_models/{args.dataset_name}/{save_model_name}"
+        save_model_path = f"/data/perm/gb20/b20042/model_merge/save_models/{args.dataset_name}/{save_model_name}"
         just_inference = False
     if args.dataset_name == "alpaca_eval":
         save_gen_results_folder = f"{cache_dir}/save_gen_instruct_responses_results/{args.dataset_name}/{save_model_name}"
@@ -650,9 +651,9 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
-    os.makedirs(f"./save_logs/{args.dataset_name}/{save_model_name}", exist_ok=True)
+    os.makedirs(f"./save_logs/{args.dataset_name}/{args.drop_method}/{save_model_name}", exist_ok=True)
     # create file handler that logs debug and higher level messages
-    fh = logging.FileHandler(f"./save_logs/{args.dataset_name}/{save_model_name}/{str(time.time())}.log")
+    fh = logging.FileHandler(f"./save_logs/{args.dataset_name}/{args.drop_method}/{save_model_name}/{str(time.time())}.log")
     fh.setLevel(logging.INFO)
     # create console handler with a higher log level
     ch = logging.StreamHandler()
