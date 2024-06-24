@@ -138,3 +138,5 @@ logs_*
 log_*
 
 *.png
+
+figs

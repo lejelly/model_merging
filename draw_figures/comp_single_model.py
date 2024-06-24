@@ -5,12 +5,13 @@ import argparse
 
 def draw(MODEL_NAME, METHOD_NAME):
     # Path to the uploaded text file
-    file_path = f'/work/gb20/b20042/model_merging/results/single_model_inference/zeroshotcot/gsm8k_{METHOD_NAME}_{MODEL_NAME}.txt'
-    fig_name = f'/work/gb20/b20042/model_merging/figs/gsm8k_{MODEL_NAME}_{METHOD_NAME}.png'
+    file_path = f'/work/gb20/b20042/model_merging/results/single_model_inference/ja_mgsm/{METHOD_NAME}/{MODEL_NAME}.txt'
+    fig_name = f'/work/gb20/b20042/model_merging/figs/{METHOD_NAME}/{MODEL_NAME}.png'
     os.makedirs(os.path.dirname(fig_name), exist_ok=True)
 
     # Lists to store the extracted accuracy and drop rate values
     accuracies = []
+    ja_accuracies = []
     drop_rates = []
 
     # Read the file and extract the data
@@ -19,11 +20,13 @@ def draw(MODEL_NAME, METHOD_NAME):
         for line in lines:
             # Extract accuracy and drop_rate using regular expressions
             accuracy_match = re.search(r'accuracy: ([\d\.]+)', line)
+            ja_accuracy_match = re.search(r'accuracy_ja: ([\d\.]+)', line)
             drop_rate_match = re.search(r'drop_rate: ([\d\.]+)', line)
 
             # Append the extracted values to the lists, handling 'xxxx' as None for accuracy
             if accuracy_match and drop_rate_match:
                 accuracies.append(float(accuracy_match.group(1)))
+                ja_accuracies.append(float(ja_accuracy_match.group(1)))
                 drop_rates.append(float(drop_rate_match.group(1)))
 
     # Revise METHOD_NAME
@@ -38,10 +41,12 @@ def draw(MODEL_NAME, METHOD_NAME):
 
     # Create the plot
     plt.figure(figsize=(10, 6))
-    plt.plot(drop_rates, accuracies, 'o-', label=MODEL_NAME, color='blue')
-    plt.xlabel('Drop Rate')
+    plt.ylim(bottom=0, top=1.0)
+    plt.plot(drop_rates, accuracies, 'b-', label='Response in Any Language', linewidth=3)
+    plt.plot(drop_rates, ja_accuracies, 'r-', label='Response in Only Japanese')
+    plt.xlabel('Drop Out Rate of Delta Parameter\n(Delta Parameter θ_delta = θ_finetuned - θ_pretrained)')
     plt.ylabel('Accuracy (%)')
-    plt.title(f'Performance on GSM8K w/{METHOD_NAME}')
+    plt.title(f'Performance on MGSM-JA w/{METHOD_NAME}')
     plt.grid(True)
     plt.legend()
 
