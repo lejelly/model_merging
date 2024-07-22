@@ -120,7 +120,7 @@ save_merge_results/
 save_gen_codes_results/
 save_gen_instruct_responses_results/
 
-
+# other garbages
 save_merge_llm_logs/
 save_logs/
 nohup.out
@@ -128,15 +128,15 @@ nohup.out
 models--*
 .locks
 figures
-
 work
 results/*
 logs/*
 tmp.*
-
 logs_*
 log_*
-
 *.png
-
 figs
+comp_log
+draw_figures
+results_logging
+*.out

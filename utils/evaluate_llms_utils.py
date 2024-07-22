@@ -73,13 +73,16 @@ def compute_score_for_ja_mgsm(results, lang_detect):
     
     corrects_ja = []
     incorrects_ja = []
+    all_response = []
     # detect Japanese by fasttext and replace empty string if it's not Ja
     if lang_detect:
-        for i, (question, resp, pred, answer) in enumerate(zip(results["question"], results["response"], results["prediction"], results["answer"])):
+        for index, (question, resp, pred, answer) in enumerate(zip(results["question"], results["response"], results["prediction"], results["answer"])):
             res = lang_detect(resp)
-            if corrects[i] and res.get("__label__ja", 0.0) > 0.5:
+            if corrects[index] and res.get("__label__ja", 0.0) > 0.5:
+                is_correct_ja=True
                 corrects_ja.append(True)
             else:
+                is_correct_ja=False
                 corrects_ja.append(False)
                 incorrects_ja.append({
                 "question": question,
@@ -87,8 +90,19 @@ def compute_score_for_ja_mgsm(results, lang_detect):
                 "prediction": pred,
                 "answer": answer
             })
+
+            all_response.append({
+                "problem_id": index, 
+                "question": question,
+                "response": resp,
+                "prediction": pred,
+                "answer": answer,
+                "is_correct_anylang": corrects[index],
+                "is_correct_ja": is_correct_ja
+            })
+                
         res_dict["acc_ja"] = sum(corrects_ja) / len(corrects_ja)
-    return res_dict, incorrect, incorrects_ja
+    return res_dict, incorrect, incorrects_ja, all_response
 
 def batch_data(data_list, batch_size=1):
     n = len(data_list) // batch_size
