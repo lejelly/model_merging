@@ -534,7 +534,7 @@ def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, 
     del llm
     torch.cuda.empty_cache()
 
-def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None):
+def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None, log_resp_path=None):
     try:
         eval_set = datasets.load_dataset(path="juletxara/mgsm", split="test", name="ja")
         eval_set = eval_set.select_columns(["question", "answer_number"])
@@ -572,7 +572,7 @@ def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=
         "prediction": preds,
     }
     
-    res_dict, incorrect, incorrects_ja = compute_score_for_ja_mgsm(results,lang_detect)
+    res_dict, incorrect, incorrects_ja, all_response = compute_score_for_ja_mgsm(results,lang_detect)
     acc = res_dict["acc"]
     try:
         acc_ja = res_dict["acc_ja"]
@@ -585,7 +585,12 @@ def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=
     logger.info(f"ja_mgsm test data length is {len(results)}, accuracy is {acc}, accuracy_ja is {acc_ja}")
     logger.info(args)
 
-    if comp_file_path is not None:
+    if log_resp_path != None:
+        os.makedirs(os.path.dirname(log_resp_path), exist_ok=True)
+        with open(log_resp_path, "w") as f:
+            json.dump(all_response, f, indent=2)
+
+    if comp_file_path != None:
         result_message = f"accuracy: {acc}, accuracy_ja: {acc_ja}, drop_rate: {drop_rate}, model_name: {model_name}, samplig_params: {sampling_params}"
         output_to_comparefile(comp_file_path, result_message)
         
@@ -617,9 +622,10 @@ if __name__ == "__main__":
     parser.add_argument("--weight_mask_rate", type=float, default=0.1, help="weight mask rate")
     parser.add_argument("--use_weight_rescale", action="store_true", default=False, help="whether to rescale the weight by 1 / (1 - weight_mask_rate)")
     parser.add_argument("--mask_strategy", type=str, help="mask strategy", default="random", choices=["random", "magnitude"])
-    parser.add_argument("--prompt_type", default="zeroshot", help="waht type of promt to use, zeroshot, fewshot, cot")
+    parser.add_argument("--prompt_type", default="zeroshotcot", help="waht type of promt to use, zeroshotcot, fewshotcot")
     parser.add_argument("--drop_method", default=None, help="waht type of drop out to use, withoutDARE, droponly, finetuned, magnitude, dare")
     parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
+    parser.add_argument("--log_resp_path", default=None, help="whether to save all response")
 
     try:
         args = parser.parse_args()
@@ -705,7 +711,8 @@ if __name__ == "__main__":
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index, 
-                  comp_file_path=args.comp_file_path, model_name=args.finetuned_model_name, drop_rate=args.weight_mask_rate)
+                  comp_file_path=args.comp_file_path, model_name=args.finetuned_model_name, drop_rate=args.weight_mask_rate,
+                  log_resp_path=args.log_resp_path)
 
     logger.info(f"inference of {args.finetuned_model_name} is completed")
 

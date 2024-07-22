@@ -120,8 +120,9 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                             just_inference=True, save_model_path=None)
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                      start_index=args.start_index, end_index=args.end_index,
-                      comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates)
+                      start_index=args.start_index, end_index=args.end_index, 
+                      comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
+                      log_resp_path=args.log_resp_path)
     elif save_math1_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
         llm = create_llm(finetuned_model_name=save_math1_model_path, pretrained_model_name=args.pretrained_model_name,
@@ -129,8 +130,9 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                             just_inference=True, save_model_path=None)
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                      start_index=args.start_index, end_index=args.end_index,
-                      comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates)
+                      start_index=args.start_index, end_index=args.end_index, 
+                      comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
+                      log_resp_path=args.log_resp_path)
 
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -159,6 +161,8 @@ parser.add_argument('--start_index', type=int, default=0)
 parser.add_argument('--end_index', type=int, default=sys.maxsize)
 parser.add_argument("--tensor_parallel_size", type=int, default=1, help="numbers of gpus to use")
 parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
+parser.add_argument("--log_resp_path", default=None, help="whether to save all response")
+
 
 try:
     args = parser.parse_args()

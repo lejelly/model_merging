@@ -28,6 +28,12 @@ def draw(MODEL_NAME, METHOD_NAME):
                 accuracies.append(float(accuracy_match.group(1)))
                 ja_accuracies.append(float(ja_accuracy_match.group(1)))
                 drop_rates.append(float(drop_rate_match.group(1)))
+    
+    sorted_data = sorted(zip(drop_rates, accuracies, ja_accuracies))
+    drop_rates, accuracies, ja_accuracies = zip(*sorted_data)
+    drop_rates = list(drop_rates)
+    accuracies = list(accuracies)
+    ja_accuracies = list(ja_accuracies)
 
     # Revise METHOD_NAME
     if METHOD_NAME=='dare':
@@ -43,7 +49,9 @@ def draw(MODEL_NAME, METHOD_NAME):
     plt.figure(figsize=(10, 6))
     plt.ylim(bottom=0, top=1.0)
     plt.plot(drop_rates, accuracies, 'b-', label='Response in Any Language', linewidth=3)
+    plt.plot(drop_rates, accuracies, 'bo', markersize=5)
     plt.plot(drop_rates, ja_accuracies, 'r-', label='Response in Only Japanese')
+    plt.plot(drop_rates, ja_accuracies, 'ro', markersize=5)
     plt.xlabel('Drop Out Rate of Delta Parameter\n(Delta Parameter θ_delta = θ_finetuned - θ_pretrained)')
     plt.ylabel('Accuracy (%)')
     plt.title(f'Performance on MGSM-JA w/{METHOD_NAME}')
