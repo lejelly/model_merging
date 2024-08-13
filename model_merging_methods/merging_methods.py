@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from model_merging_methods.task_vector import TaskVector
 from utils.utils import get_param_names_to_merge, get_modules_to_merge
-from model_merging_methods.mask_weights_utils import mask_model_weights
+from model_merging_methods.mask_weights_utils import mask_model_weights,mask_model_weights_exclusive
 
 
 class MergingMethod:
@@ -530,7 +530,7 @@ class MergingMethod:
                        nums_fisher_examples: list = None, fisher_scaling_coefficients: list = None, normalize_fisher_weight: bool = True, minimal_fisher_weight: float = 1e-6,
                        nums_regmean_examples: list = None, reduce_non_diagonal_ratio: float = 1.0, param_value_mask_rate: float = 0.8,
                        weight_format: str = "delta_weight", weight_mask_rates: list = None, use_weight_rescale: bool = True, mask_strategy: str = "random",
-                       mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False):
+                       mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False, exclusive_dropout: bool = False):
         """
         model merging methods
         :param merged_model: nn.Module, the merged model
@@ -551,6 +551,7 @@ class MergingMethod:
         :param mask_strategy: str, mask strategy, can be "random" and "magnitude"
         :param mask_apply_method: str, merging method that the mask strategy applies
         :param models_use_deepcopy: boolean, whether to deepcopy the models
+        :param exclusive_dropout: boolean, whether to adopt exclusive_dropout only with two models merging
         :return:
         """
         if self.merging_method_name == "average_merging":
@@ -574,12 +575,19 @@ class MergingMethod:
                     new_models_to_merge = copy.deepcopy(models_to_merge)
                 else:
                     new_models_to_merge = models_to_merge
-                for new_model_to_merge, weight_mask_rate in zip(new_models_to_merge, weight_mask_rates):
-                    # for each individual model, mask its weight
-                    masked_param_dict = mask_model_weights(finetuned_model=new_model_to_merge, pretrained_model=merged_model,
-                                                           exclude_param_names_regex=exclude_param_names_regex, weight_format=weight_format,
-                                                           weight_mask_rate=weight_mask_rate, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy)
-                    self.copy_params_to_model(params=masked_param_dict, model=new_model_to_merge)
+                if exclusive_dropout:
+                    masked_param_dicts = mask_model_weights_exclusive(finetuned_models=new_models_to_merge, pretrained_model=merged_model,
+                                                        exclude_param_names_regex=exclude_param_names_regex, weight_format=weight_format,
+                                                        weight_mask_rate=0.5, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy)
+                    self.copy_params_to_model(params=masked_param_dicts[0], model=new_models_to_merge[0])
+                    self.copy_params_to_model(params=masked_param_dicts[1], model=new_models_to_merge[1])
+                else:
+                    for new_model_to_merge, weight_mask_rate in zip(new_models_to_merge, weight_mask_rates):
+                        # for each individual model, mask its weight
+                        masked_param_dict = mask_model_weights(finetuned_model=new_model_to_merge, pretrained_model=merged_model,
+                                                            exclude_param_names_regex=exclude_param_names_regex, weight_format=weight_format,
+                                                            weight_mask_rate=weight_mask_rate, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy)
+                        self.copy_params_to_model(params=masked_param_dict, model=new_model_to_merge)
             if mask_apply_method == "average_merging":
                 merged_params = self.average_merging(models_to_merge=new_models_to_merge, exclude_param_names_regex=exclude_param_names_regex)
             elif mask_apply_method == "task_arithmetic":
@@ -605,7 +613,7 @@ class MergingMethod:
                          nums_fisher_examples: list = None, fisher_scaling_coefficients: list = None, normalize_fisher_weight: bool = True, minimal_fisher_weight: float = 1e-6,
                          nums_regmean_examples: list = None, reduce_non_diagonal_ratio: float = 1.0, param_value_mask_rate: float = 0.8,
                          weight_format: str = "delta_weight", weight_mask_rates: list = None, use_weight_rescale: bool = True, mask_strategy: str = "random",
-                         mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False):
+                         mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False, exclusive_dropout: bool = False):
         """
         merge the parameters of models_to_merge to merged_model
         :param merged_model: nn.Module, the merged model
@@ -626,6 +634,7 @@ class MergingMethod:
         :param mask_strategy: str, mask strategy, can be "random" and "magnitude"
         :param mask_apply_method: str, merging method that the mask strategy applies
         :param models_use_deepcopy: boolean, whether to deepcopy the models
+        :param exclusive_dropout: boolean, whether to adopt exclusive_dropout only with two models merging
         :return:
         """
         # merged_params, dict of parameters
@@ -634,7 +643,7 @@ class MergingMethod:
                                             normalize_fisher_weight=normalize_fisher_weight, minimal_fisher_weight=minimal_fisher_weight,
                                             nums_regmean_examples=nums_regmean_examples, reduce_non_diagonal_ratio=reduce_non_diagonal_ratio, param_value_mask_rate=param_value_mask_rate,
                                             weight_format=weight_format, weight_mask_rates=weight_mask_rates, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy,
-                                            mask_apply_method=mask_apply_method, models_use_deepcopy=models_use_deepcopy)
+                                            mask_apply_method=mask_apply_method, models_use_deepcopy=models_use_deepcopy, exclusive_dropout=exclusive_dropout)
         self.copy_params_to_model(params=merged_params, model=merged_model)
 
         return merged_model

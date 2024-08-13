@@ -98,7 +98,8 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                    use_weight_rescale=args.use_weight_rescale,
                                                    mask_strategy=args.mask_strategy,
                                                    mask_apply_method=args.mask_apply_method,
-                                                   models_use_deepcopy=False)
+                                                   models_use_deepcopy=False,
+                                                   exclusive_dropout=args.exclusive_dropout)
 
     save_jp1_model_path = save_jp2_model_path = save_bio_model_path = save_math1_model_path = save_math2_model_path = save_math3_model_path = None
     if args.merge_jp1:
@@ -175,6 +176,7 @@ parser.add_argument('--end_index', type=int, default=sys.maxsize)
 parser.add_argument("--tensor_parallel_size", type=int, default=1, help="numbers of gpus to use")
 parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
 parser.add_argument("--log_resp_path", default=None, help="whether to save all response")
+parser.add_argument("--exclusive_dropout", action="store_true", default=False, help="exclusive drop")
 
 
 try:
