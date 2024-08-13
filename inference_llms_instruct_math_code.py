@@ -11,6 +11,7 @@ import json
 import torch
 import datasets
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AddedToken
 from vllm import LLM, SamplingParams
 from human_eval.data import write_jsonl, read_problems, stream_jsonl
 
@@ -106,6 +107,23 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
             finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir)
 
+
+        # set the pad_token of pretrained and finetuned tokenizer
+        # note that WizardMath-70B-V1.0 adds two tokens {"<pad>": 32000, "[PAD]": 32001} with (32002, 8192) token embedding size
+        # therefore, for WizardMath-70B-V1.0, we add one distinct pad_token "<pad>[PAD]" to reshape the token embedding size to (32001, 8192)
+        
+        pad_token = "<extra_id_32001><extra_id_32002><extra_id_32003><extra_id_32004><extra_id_32005><extra_id_32006><extra_id_32007><extra_id_32008><extra_id_32009><extra_id_32010><extra_id_32011><extra_id_32012><extra_id_32013><extra_id_32014><extra_id_32015><extra_id_32016><extra_id_32017><extra_id_32018><extra_id_32019><extra_id_32020><extra_id_32021><extra_id_32022><extra_id_32023><extra_id_32024><extra_id_32025><extra_id_32026><extra_id_32027><extra_id_32028><extra_id_32029><extra_id_32030><extra_id_32031><pad>"
+        smart_tokenizer_and_embedding_resize(
+            special_tokens_dict=dict(pad_token=pad_token),
+            model=pretrained_model,
+            tokenizer=pretrained_tokenizer,
+        )
+        smart_tokenizer_and_embedding_resize(
+            special_tokens_dict=dict(pad_token=pad_token),
+            model=finetuned_model,
+            tokenizer=finetuned_tokenizer,
+        )
+        
         # set random seed to guarantee reproducibility
         set_random_seed(seed=0)
         masked_param_dict = mask_model_weights(finetuned_model=finetuned_model, pretrained_model=pretrained_model,
@@ -681,6 +699,8 @@ if __name__ == "__main__":
                      args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                      just_inference=just_inference, save_model_path=save_model_path)
     
+    print("aaaa")
+    
     if args.dataset_name == "alpaca_eval":
         test_alpaca_eval(llm=llm, finetuned_model_name=args.finetuned_model_name,
                          args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
@@ -708,6 +728,7 @@ if __name__ == "__main__":
     
     else:
         assert args.dataset_name == "ja_mgsm"
+        print("bbbb")
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index, 

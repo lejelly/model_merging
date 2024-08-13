@@ -52,18 +52,31 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
 
-    # set the pad_token of pretrained and finetuned tokenizer
-    smart_tokenizer_and_embedding_resize(
-        special_tokens_dict=dict(pad_token="[PAD]"),
-        model=pretrained_model,
-        tokenizer=pretrained_tokenizer,
-    )
-    for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+    if "GAIR/Abel-7B-002" in finetuned_model_names:
+        pad_token = "<extra_id_32001><extra_id_32002><extra_id_32003><extra_id_32004><extra_id_32005><extra_id_32006><extra_id_32007><extra_id_32008><extra_id_32009><extra_id_32010><extra_id_32011><extra_id_32012><extra_id_32013><extra_id_32014><extra_id_32015><extra_id_32016><extra_id_32017><extra_id_32018><extra_id_32019><extra_id_32020><extra_id_32021><extra_id_32022><extra_id_32023><extra_id_32024><extra_id_32025><extra_id_32026><extra_id_32027><extra_id_32028><extra_id_32029><extra_id_32030><extra_id_32031><pad>"
+        smart_tokenizer_and_embedding_resize(
+            special_tokens_dict=dict(pad_token=pad_token),
+            model=pretrained_model,
+            tokenizer=pretrained_tokenizer,
+        )
+        for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+            smart_tokenizer_and_embedding_resize(
+                special_tokens_dict=dict(pad_token=pad_token),
+                model=finetuned_model,
+                tokenizer=finetuned_tokenizer,
+            )
+    else:
         smart_tokenizer_and_embedding_resize(
             special_tokens_dict=dict(pad_token="[PAD]"),
-            model=finetuned_model,
-            tokenizer=finetuned_tokenizer,
+            model=pretrained_model,
+            tokenizer=pretrained_tokenizer,
         )
+        for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+            smart_tokenizer_and_embedding_resize(
+                special_tokens_dict=dict(pad_token="[PAD]"),
+                model=finetuned_model,
+                tokenizer=finetuned_tokenizer,
+            )
 
     # set random seed to guarantee reproducibility
     set_random_seed(seed=0)

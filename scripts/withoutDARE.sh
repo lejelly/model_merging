@@ -1,5 +1,5 @@
 #!/bin/bash
-#PJM -L rscgrp=short-a
+#PJM -L rscgrp=debug-a
 #PJM -L node=1
 #PJM -L elapse=0:30:00
 #PJM -j
@@ -20,7 +20,7 @@ DATASET=ja_mgsm
 #LOG_RESP_PATH=./results_logging/single_model_inference/${DATASET}/${MODEL_NAME}/withoutDARE_response.json
 
 MODEL1=WizardMath-7B-V1.1
-MODEL2=shisa-gamma-7b-v1
+MODEL2=GAIR/Abel-7B-002
 COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/without_DARE.txt
 LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/withoutDARE_response.json
 
@@ -47,7 +47,7 @@ huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 #    --log_resp_path $LOG_RESP_PATH
 
 python3 merge_llms_instruct_math_code.py \
-    --merge_jp1 --merge_math1 \
+    --merge_math1 --merge_math2 \
     --merging_method_name $MERGE_METHOD \
     --scaling_coefficient 1.0 \
     --tensor_parallel_size 1 \
