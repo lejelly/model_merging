@@ -1,20 +1,10 @@
 #!/bin/bash
-#PJM -L rscgrp=regular-a
+#PJM -L rscgrp=short-a
 #PJM -L node=1
-#PJM -L elapse=1:00:00
+#PJM -L elapse=0:30:00
 #PJM -j
 
-DATASET=ja_mgsm
-DROP_METHOD=dare
-MODEL1=WizardMath-7B-V1.1
-MODEL2=shisa-gamma-7b-v1
-
-#MERGE_METHOD=task_arithmetic
-#MERGE_METHOD=ties_merging
-
-COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/dare.txt
-LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/dare_response.json
-
+#DROP_RATE=$PJM_JOBENV_DROP_RATE
 
 # module load
 source import-env.sh .env
@@ -28,35 +18,64 @@ cd $PATH_TO_WORKING_DIR
 source work/bin/activate
 huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
-#MODELS=(
-#    "WizardLMTeam/WizardMath-7B-V1.1"
-#    "augmxnt/shisa-gamma-7b-v1"
-#)
+DATASET=ja_mgsm
+DROP_METHOD=dare
 
-#DROP_RATES=($(seq 0.0 0.1 1.0) 0.99)
-#for MODEL_NAME in "${MODELS[@]}"; do
-#    echo "Starting inference for model: $MODEL_NAME"
-#    COMP_FILE_PATH=./results/single_model_inference/${DATASET}/${DROP_METHOD}/${MODEL_NAME}.txt
-#
-#    for DROP_RATE in "${DROP_RATES[@]}"; do
-#        echo "Running with drop rate: $DROP_RATE"
-#        python3 inference_llms_instruct_math_code.py \
-#            --dataset_name $DATASET \
-#            --finetuned_model_name $MODEL_NAME \
-#            --tensor_parallel_size 1 \
-#            --weight_mask_rate $DROP_RATE \
-#            --use_weight_rescale \
-#            --drop_method $DROP_METHOD \
-#            --comp_file_path $COMP_FILE_PATH
-#    done
-#done
+<< COMMENTOUT
+#MODEL_NAME=GAIR/Abel-7B-002
+COMP_FILE_PATH=./results/single_model_inference/${DATASET}/${DROP_METHOD}/${MODEL_NAME}.txt
+
+python3 inference_llms_instruct_math_code.py \
+    --dataset_name $DATASET \
+    --finetuned_model_name $MODEL_NAME \
+    --tensor_parallel_size 1 \
+    --weight_mask_rate $DROP_RATE \
+    --use_weight_rescale \
+    --drop_method $DROP_METHOD \
+    --comp_file_path $COMP_FILE_PATH 
+
+
+COMP_FILE_PATH=./results_logging/single_model_inference/${DATASET}/dare.txt
+LOG_RESP_PATH=./results_logging/single_model_inference/${DATASET}/${DROP_METHOD}/dare_response.json
+MODELS=(
+    "GAIR/Abel-7B-002"
+)
+
+
+DROP_RATES=($(seq 0.0 0.1 1.0) 0.99)
+for MODEL_NAME in "${MODELS[@]}"; do
+    echo "Starting inference for model: $MODEL_NAME"
+    COMP_FILE_PATH=./results/single_model_inference/${DATASET}/${DROP_METHOD}/${MODEL_NAME}.txt
+
+    for DROP_RATE in "${DROP_RATES[@]}"; do
+        echo "Running with drop rate: $DROP_RATE"
+        python3 inference_llms_instruct_math_code.py \
+            --dataset_name $DATASET \
+            --finetuned_model_name $MODEL_NAME \
+            --tensor_parallel_size 1 \
+            --weight_mask_rate $DROP_RATE \
+            --use_weight_rescale \
+            --drop_method $DROP_METHOD \
+            --comp_file_path $COMP_FILE_PATH 
+    done
+done
 
 #echo "All inferences completed"
+COMMENTOUT
 
-DROP_RATE=(0.1)
+MODEL1=WizardMath-7B-V1.1
+MODEL2=GAIR/Abel-7B-002
+
+#MERGE_METHOD=task_arithmetic
+MERGE_METHOD=ties_merging
+
+DROP_RATE=(0.5)
+
+COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/dare.txt
+LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/dare_response.json
 
 python3 merge_llms_instruct_math_code.py \
-    --merge_jp1 --merge_math1 \
+    --merge_math1 --merge_math2 \
     --merging_method_name mask_merging \
     --mask_apply_method $MERGE_METHOD \
     --use_weight_rescale --weight_mask_rate $DROP_RATE \
