@@ -66,13 +66,11 @@ COMMENTOUT
 MODEL1=WizardMath-7B-V1.1
 MODEL2=GAIR/Abel-7B-002
 
-#MERGE_METHOD=task_arithmetic
-MERGE_METHOD=ties_merging
-
+MERGE_METHOD=task_arithmetic
+#MERGE_METHOD=ties_merging
 DROP_RATE=(0.5)
-
-COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/dare.txt
-LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/dare_response.json
+COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/exclusive_dare.txt
+LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/exclusive_dare/dare_response.json
 
 python3 merge_llms_instruct_math_code.py \
     --merge_math1 --merge_math2 \
@@ -81,6 +79,7 @@ python3 merge_llms_instruct_math_code.py \
     --use_weight_rescale --weight_mask_rate $DROP_RATE \
     --scaling_coefficient 1.0 \
     --tensor_parallel_size 1 \
-    --comp_file_path $COMP_FILE_PATH\
-    --log_resp_path $LOG_RESP_PATH
+    --comp_file_path $COMP_FILE_PATH \
+    --log_resp_path $LOG_RESP_PATH \
+    --exclusive_dropout 
 
