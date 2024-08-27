@@ -79,7 +79,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
             )
 
     # set random seed to guarantee reproducibility
-    set_random_seed(seed=0)
+    set_random_seed(seed=args.seed)
     merged_model = pretrained_model
     merged_model = merging_method.get_merged_model(merged_model=merged_model,
                                                    models_to_merge=models_to_merge,
@@ -177,6 +177,8 @@ parser.add_argument("--tensor_parallel_size", type=int, default=1, help="numbers
 parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
 parser.add_argument("--log_resp_path", default=None, help="whether to save all response")
 parser.add_argument("--exclusive_dropout", action="store_true", default=False, help="exclusive drop")
+parser.add_argument("--seed", type=int, default=0, help="seed")
+
 
 
 try:
@@ -217,7 +219,10 @@ if __name__ == "__main__":
             assert args.mask_apply_method == "task_arithmetic" or args.mask_apply_method == "ties_merging"
             mask_apply_method_name = f"{args.mask_apply_method}_scaling_coefficient_{args.scaling_coefficient}"
         weight_mask_rates = [str(weight_mask_rate) for weight_mask_rate in args.weight_mask_rates]
-        args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}"
+        if args.exclusive_dropout:
+            args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/exclusive_mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}"
+        else:
+            args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}"
 
     save_merge_log_path = f"./save_merge_llm_logs/{'_'.join(merge_task_names)}/{args.save_model_name}"
     args.model_name_in_comp_file = f"{'_'.join(merge_task_names)}_{args.save_model_name}"
