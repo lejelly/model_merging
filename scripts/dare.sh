@@ -1,5 +1,5 @@
 #!/bin/bash
-#PJM -L rscgrp=short-a
+#PJM -L rscgrp=debug-a
 #PJM -L node=1
 #PJM -L elapse=0:30:00
 #PJM -j
@@ -69,10 +69,14 @@ MODEL2=GAIR/Abel-7B-002
 MERGE_METHOD=task_arithmetic
 #MERGE_METHOD=ties_merging
 DROP_RATE=(0.5)
+SEED=(564832)
+#COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/dare.txt
+#LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/dare_response_seed${SEED}.json
 COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/exclusive_dare.txt
-LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/exclusive_dare/dare_response.json
+LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/exclusive_dare/dare_response_seed${SEED}.json
 
 python3 merge_llms_instruct_math_code.py \
+    --seed $SEED \
     --merge_math1 --merge_math2 \
     --merging_method_name mask_merging \
     --mask_apply_method $MERGE_METHOD \
@@ -81,5 +85,6 @@ python3 merge_llms_instruct_math_code.py \
     --tensor_parallel_size 1 \
     --comp_file_path $COMP_FILE_PATH \
     --log_resp_path $LOG_RESP_PATH \
-    --exclusive_dropout 
+    --exclusive_dropout
+
 
