@@ -1,7 +1,7 @@
 #!/bin/bash
-#PJM -L rscgrp=debug-a
+#PJM -L rscgrp=debug-a 
 #PJM -L node=1
-#PJM -L elapse=0:30:00
+#PJM -L elapse=0:20:00
 #PJM -j
 
 #DROP_RATE=$PJM_JOBENV_DROP_RATE
@@ -22,6 +22,21 @@ DATASET=ja_mgsm
 DROP_METHOD=dare
 
 << COMMENTOUT
+DROP_RATE=(0.5)
+SEED=(0)
+MODEL_NAME=GAIR/Abel-7B-002
+COMP_FILE_PATH=./results_logging/single_model_inference/${DATASET}/${MODEL_NAME}/${DROP_METHOD}/.txt
+
+python3 inference_llms_instruct_math_code.py \
+    --seed $SEED \
+    --dataset_name $DATASET \
+    --finetuned_model_name $MODEL_NAME \
+    --tensor_parallel_size 1 \
+    --use_weight_rescale --weight_mask_rate $DROP_RATE \
+    --drop_method $DROP_METHOD \
+    --comp_file_path $COMP_FILE_PATH 
+
+
 #MODEL_NAME=GAIR/Abel-7B-002
 COMP_FILE_PATH=./results/single_model_inference/${DATASET}/${DROP_METHOD}/${MODEL_NAME}.txt
 
@@ -32,7 +47,9 @@ python3 inference_llms_instruct_math_code.py \
     --weight_mask_rate $DROP_RATE \
     --use_weight_rescale \
     --drop_method $DROP_METHOD \
-    --comp_file_path $COMP_FILE_PATH 
+    --comp_file_path $COMP_FILE_PATH \ 
+    --exclusive_dropout \ 
+    --subordinate_mask
 
 
 COMP_FILE_PATH=./results_logging/single_model_inference/${DATASET}/dare.txt
@@ -59,25 +76,24 @@ for MODEL_NAME in "${MODELS[@]}"; do
             --comp_file_path $COMP_FILE_PATH 
     done
 done
-
-#echo "All inferences completed"
 COMMENTOUT
 
 MODEL1=WizardMath-7B-V1.1
-MODEL2=GAIR/Abel-7B-002
+MODEL2=shisa-gamma-7b-v1
 
 MERGE_METHOD=task_arithmetic
 #MERGE_METHOD=ties_merging
 DROP_RATE=(0.5)
-SEED=(564832)
+SEED=(0)
+GRADATIONTATE=(1.0)
 #COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/dare.txt
 #LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/dare_response_seed${SEED}.json
-COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/exclusive_dare.txt
-LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/exclusive_dare/dare_response_seed${SEED}.json
+COMP_FILE_PATH=./results_logging/exclusive_dare/${DATASET}/${MODEL1}_${MODEL2}/exclusive_dare_seed${SEED}_gr${GRADATIONTATE}.txt
+LOG_RESP_PATH=./results_logging/exclusive_dare/${DATASET}/${MODEL1}_${MODEL2}/dare_response_seed${SEED}_gr${GRADATIONTATE}.json
 
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
-    --merge_math1 --merge_math2 \
+    --merge_math1 --merge_jp1 \
     --merging_method_name mask_merging \
     --mask_apply_method $MERGE_METHOD \
     --use_weight_rescale --weight_mask_rate $DROP_RATE \
@@ -85,6 +101,7 @@ python3 merge_llms_instruct_math_code.py \
     --tensor_parallel_size 1 \
     --comp_file_path $COMP_FILE_PATH \
     --log_resp_path $LOG_RESP_PATH \
-    --exclusive_dropout
+    --exclusive_dropout \
+    --exclusive_gradation $GRADATIONTATE
 
 

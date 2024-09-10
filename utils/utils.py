@@ -115,3 +115,15 @@ class LanguageDetector:
 
     def __call__(self, text: str) -> dict:
         return dict(zip(*self.model.predict(text.replace("\n", ""), k=-1)))
+
+
+def copy_params_to_model(params: dict, model: nn.Module):
+    """
+    copy parameters in "params" to the model
+    :param params: dict, dictionary of parameters
+    :param model: nn.Module, model that needs to copy parameters
+    :return:
+    """
+    for param_name, param_value in model.named_parameters():
+        if param_name in params:
+            param_value.data.copy_(params[param_name])

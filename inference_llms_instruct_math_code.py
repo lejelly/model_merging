@@ -125,12 +125,12 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         )
         
         # set random seed to guarantee reproducibility
-        set_random_seed(seed=0)
+        set_random_seed(seed=args.seed)
         masked_param_dict = mask_model_weights(finetuned_model=finetuned_model, pretrained_model=pretrained_model,
-                                               exclude_param_names_regex=[], weight_format=args.weight_format,
-                                               weight_mask_rate=args.weight_mask_rate,
-                                               use_weight_rescale=args.use_weight_rescale, mask_strategy=args.mask_strategy)
-        
+                                            exclude_param_names_regex=[], weight_format=args.weight_format,
+                                            weight_mask_rate=args.weight_mask_rate,
+                                            use_weight_rescale=args.use_weight_rescale, mask_strategy=args.mask_strategy)
+            
         # copy the masked parameters to the original model
         for param_name, param_value in finetuned_model.named_parameters():
             if param_name in masked_param_dict:
@@ -644,6 +644,7 @@ if __name__ == "__main__":
     parser.add_argument("--drop_method", default=None, help="waht type of drop out to use, withoutDARE, droponly, finetuned, magnitude, dare")
     parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
     parser.add_argument("--log_resp_path", default=None, help="whether to save all response")
+    parser.add_argument("--seed", type=int, default=0, help="seed")
 
     try:
         args = parser.parse_args()
