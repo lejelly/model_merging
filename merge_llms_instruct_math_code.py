@@ -115,7 +115,8 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                     mask_apply_method=args.mask_apply_method,
                                                     models_use_deepcopy=False,
                                                     exclusive_dropout=args.exclusive_dropout,
-                                                    exclusive_gradation=args.exclusive_gradation)
+                                                    gradation1=args.gradation1,
+                                                    gradation2=args.gradation2)
 
     save_jp1_model_path = save_jp2_model_path = save_bio_model_path = save_math1_model_path = save_math2_model_path = save_math3_model_path = None
     if args.merge_jp1:
@@ -152,7 +153,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                       start_index=args.start_index, end_index=args.end_index, 
                       comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
-                      log_resp_path=args.log_resp_path)
+                      log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
     elif save_math1_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
         llm = create_llm(finetuned_model_name=save_math1_model_path, pretrained_model_name=args.pretrained_model_name,
@@ -162,13 +163,12 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                       start_index=args.start_index, end_index=args.end_index, 
                       comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
-                      log_resp_path=args.log_resp_path)
+                      log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
 
     for save_model_path in save_model_paths:
         if save_model_path is not None:
             shutil.rmtree(save_model_path, ignore_errors=True)
     logger.info(f"inference of merging method {args.merging_method_name} is completed")
-
 
 parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_jp1", action="store_true", default=False, help="whether to merge instruct model")
@@ -196,7 +196,8 @@ parser.add_argument("--exclusive_dropout", action="store_true", default=False, h
 parser.add_argument("--seed", type=int, default=0, help="seed")
 parser.add_argument("--subordinate_mask", action="store_true", default=False, help="subordinate_mask")
 parser.add_argument("--single_exclusive_model", action="store_true", default=False, help="single_exclusive_model")
-parser.add_argument("--exclusive_gradation", type=float, default=1.0, help="exclusive_gradation")
+parser.add_argument("--gradation1", type=float, default=1.0, help="gradation1")
+parser.add_argument("--gradation2", type=float, default=1.0, help="gradation2")
 
 try:
     args = parser.parse_args()
@@ -227,7 +228,7 @@ if __name__ == "__main__":
     if args.merging_method_name == "average_merging":
         args.save_model_name = f"{args.merging_method_name}"
     elif args.merging_method_name == "task_arithmetic" or args.merging_method_name == "ties_merging":
-        args.save_model_name = f"{args.merging_method_name}_scaling_coefficient_{args.scaling_coefficient}"
+        args.save_model_name = f"{args.merging_method_name}_scaling_coefficient_{args.scaling_coefficient}_grad1_{args.gradation1}_grad2_{args.gradation2}"
     else:
         assert args.merging_method_name == "mask_merging"
         if args.mask_apply_method == "average_merging":
@@ -237,9 +238,9 @@ if __name__ == "__main__":
             mask_apply_method_name = f"{args.mask_apply_method}_scaling_coefficient_{args.scaling_coefficient}"
         weight_mask_rates = [str(weight_mask_rate) for weight_mask_rate in args.weight_mask_rates]
         if args.exclusive_dropout:
-            args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/exclusive_mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}"
+            args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/exclusive_mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}_grad1_{args.gradation1}_grad2_{args.gradation2}"
         else:
-            args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}"
+            args.save_model_name = f"{args.merging_method_name}/{mask_apply_method_name}/mask_{'_'.join(weight_mask_rates)}_rescale_{args.use_weight_rescale}_grad1_{args.gradation1}_grad2_{args.gradation2}" 
 
     save_merge_log_path = f"./save_merge_llm_logs/{'_'.join(merge_task_names)}/{args.save_model_name}"
     args.model_name_in_comp_file = f"{'_'.join(merge_task_names)}_{args.save_model_name}"

@@ -1,5 +1,5 @@
 #!/bin/bash
-#PJM -L rscgrp=debug-a 
+#PJM -L rscgrp=debug-a
 #PJM -L node=1
 #PJM -L elapse=0:20:00
 #PJM -j
@@ -85,12 +85,26 @@ MERGE_METHOD=task_arithmetic
 #MERGE_METHOD=ties_merging
 DROP_RATE=(0.5)
 SEED=(0)
-GRADATIONTATE=(1.0)
-#COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/dare.txt
-#LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/dare_response_seed${SEED}.json
-COMP_FILE_PATH=./results_logging/exclusive_dare/${DATASET}/${MODEL1}_${MODEL2}/exclusive_dare_seed${SEED}_gr${GRADATIONTATE}.txt
-LOG_RESP_PATH=./results_logging/exclusive_dare/${DATASET}/${MODEL1}_${MODEL2}/dare_response_seed${SEED}_gr${GRADATIONTATE}.json
+GRADATIONTATE=(0.2)
+COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/weighted_task_arithmetic/seed${SEED}_gr${GRADATIONTATE}.txt
+LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/weighted_task_arithmetic/${MODEL1}_${MODEL2}/${MERGE_METHOD}/seed${SEED}_gr${GRADATIONTATE}.json
+#COMP_FILE_PATH=./results_logging/exclusive_dare/${DATASET}/${MODEL1}_${MODEL2}/exclusive_dare_seed${SEED}_gr${GRADATIONTATE}.txt
+#LOG_RESP_PATH=./results_logging/exclusive_dare/${DATASET}/${MODEL1}_${MODEL2}/dare_response_seed${SEED}_gr${GRADATIONTATE}.json
 
+python3 merge_llms_instruct_math_code.py \
+    --seed $SEED \
+    --merge_math1 --merge_jp1 \
+    --merging_method_name mask_merging \
+    --mask_apply_method $MERGE_METHOD \
+    --use_weight_rescale --weight_mask_rate $DROP_RATE \
+    --scaling_coefficient 1.0 \
+    --tensor_parallel_size 1 \
+    --comp_file_path $COMP_FILE_PATH \
+    --log_resp_path $LOG_RESP_PATH \
+    --exclusive_gradation $GRADATIONTATE
+
+<< COMMENTOUT
+#EXLUSIVE SETTING
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
     --merge_math1 --merge_jp1 \
@@ -103,5 +117,4 @@ python3 merge_llms_instruct_math_code.py \
     --log_resp_path $LOG_RESP_PATH \
     --exclusive_dropout \
     --exclusive_gradation $GRADATIONTATE
-
-
+COMMENTOUT
