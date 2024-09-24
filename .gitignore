@@ -132,6 +132,7 @@ work
 results/*
 logs/*
 tmp.*
+tmp2.*
 logs_*
 log_*
 *.png

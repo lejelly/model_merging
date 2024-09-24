@@ -552,7 +552,7 @@ def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, 
     del llm
     torch.cuda.empty_cache()
 
-def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None, log_resp_path=None):
+def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None, log_resp_path=None, gradation1=None, gradation2=None):
     try:
         eval_set = datasets.load_dataset(path="juletxara/mgsm", split="test", name="ja")
         eval_set = eval_set.select_columns(["question", "answer_number"])
@@ -608,8 +608,8 @@ def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=
         with open(log_resp_path, "w") as f:
             json.dump(all_response, f, indent=2)
 
-    if comp_file_path != None:
-        result_message = f"accuracy: {acc}, accuracy_ja: {acc_ja}, drop_rate: {drop_rate}, model_name: {model_name}, samplig_params: {sampling_params}"
+    if comp_file_path != None and gradation1 != None and gradation2 != None:
+        result_message = f"[math:jp]=[{gradation1},{gradation2}], accuracy: {acc}, accuracy_ja: {acc_ja}, drop_rate: {drop_rate}, model_name: {model_name}, samplig_params: {sampling_params}"
         output_to_comparefile(comp_file_path, result_message)
         
     del llm
