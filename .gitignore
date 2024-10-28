@@ -141,3 +141,6 @@ comp_log
 draw_figures
 results_logging
 *.out
+env_eval
+*nohup.out
+test_files

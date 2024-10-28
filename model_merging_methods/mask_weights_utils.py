@@ -3,8 +3,10 @@ import torch
 import torch.nn as nn
 
 from utils.utils import get_param_names_to_merge
-from model_merging_methods.task_vector import TaskVector
-
+from model_merging_methods.task_vector import TaskVector, NewTaskVector
+from memory_profiler import profile
+from typing import Dict, Iterator, Tuple
+import copy
 
 def mask_input_with_mask_rate(input_tensor: torch.Tensor, mask_rate: float, use_rescale: bool, mask_strategy: str):
     """
@@ -34,7 +36,7 @@ def mask_input_with_mask_rate(input_tensor: torch.Tensor, mask_rate: float, use_
         masked_input_tensor = torch.div(input=masked_input_tensor, other=1 - mask_rate)
     return masked_input_tensor
 
-
+@profile
 def mask_model_weights(finetuned_model: nn.Module, pretrained_model: nn.Module, exclude_param_names_regex: list, weight_format: str,
                        weight_mask_rate: float, use_weight_rescale: bool, mask_strategy: str):
     """
@@ -48,6 +50,7 @@ def mask_model_weights(finetuned_model: nn.Module, pretrained_model: nn.Module, 
     :param mask_strategy: str, mask strategy, can be "random" and "magnitude"
     :return:
     """
+    
     # get weights that need to be masked
     if weight_format == "finetuned_weight":
         param_dict = {param_name: param_value for param_name, param_value in finetuned_model.named_parameters()}
@@ -60,16 +63,22 @@ def mask_model_weights(finetuned_model: nn.Module, pretrained_model: nn.Module, 
         model_param_dict = task_vector.task_vector_param_dict
 
     with torch.no_grad():
-        masked_param_dict = {}
-        for param_name, param_value in tqdm(model_param_dict.items()):
-            masked_param_dict[param_name] = mask_input_with_mask_rate(input_tensor=param_value, mask_rate=weight_mask_rate,
-                                                                      use_rescale=use_weight_rescale, mask_strategy=mask_strategy)
+        masked_params = {}
+        for param_name, param_value in model_param_dict.items():
+            masked_param = mask_input_with_mask_rate(
+                input_tensor=param_value, 
+                mask_rate=weight_mask_rate,
+                use_rescale=use_weight_rescale, 
+                mask_strategy=mask_strategy
+            )
+            masked_params[param_name] = masked_param
+            yield param_name, masked_param
+        
         if weight_format == "delta_weight":
-            new_task_vector = TaskVector(task_vector_param_dict=masked_param_dict)
+            new_task_vector = TaskVector(task_vector_param_dict=masked_params)
             # combine with parameters of the merged model based on scaling coefficient
-            masked_param_dict = new_task_vector.combine_with_pretrained_model(pretrained_model=pretrained_model, scaling_coefficient=1.0)
+            yield from new_task_vector.combine_with_pretrained_model(pretrained_model=pretrained_model, scaling_coefficient=1.0)
 
-    return masked_param_dict
 
 def simple_mask_input(input_tensor: torch.Tensor, mask_rate: float, use_rescale: bool, mask_strategy: str):
     """
@@ -83,10 +92,10 @@ def simple_mask_input(input_tensor: torch.Tensor, mask_rate: float, use_rescale:
     assert 0.0 <= mask_rate <= 1.0, f"wrong range of mask_rate {mask_rate}, should be [0.0, 1.0]!"
     if mask_strategy == "random":
         mask = torch.bernoulli(torch.full_like(input=input_tensor, fill_value=mask_rate)).to(input_tensor.device)
-        masked_input_tensor = input_tensor * (1 - mask)
+        input_tensor.mul_(1 - mask)
     if use_rescale and mask_rate != 1.0:
-        masked_input_tensor = torch.div(input=masked_input_tensor, other=1 - mask_rate)
-    return masked_input_tensor, mask
+        input_tensor.div_(1 - mask_rate)
+    return input_tensor, mask
 
 def exclusive_mask_input(input_tensor: torch.Tensor, mask_rate: float, use_rescale: bool, mask_strategy: str, mask: torch.Tensor):
     """
@@ -99,11 +108,16 @@ def exclusive_mask_input(input_tensor: torch.Tensor, mask_rate: float, use_resca
     """
     assert 0.0 <= mask_rate <= 1.0, f"wrong range of mask_rate {mask_rate}, should be [0.0, 1.0]!"
     if mask_strategy == "random":
-        exclusive_mask = 1 - mask
-        masked_input_tensor = input_tensor * (1 - exclusive_mask)
+        #exclusive_mask = 1 - mask
+        #masked_input_tensor = input_tensor * (1 - exclusive_mask) # 元実装が1つ目のモデルに 1-mask をかけているので、exclusive_mask(=mask)はちゃんと排他的になっている
+        
+        mask.neg_() # in-place操作で mask の各要素を負にする  [0, 1, 0, 1]->[0, -1, 0, -1]
+        mask.add_(1) # mask の各要素に1を加えます [0, -1, 0, -1]->[1, 0, 1, 0]
+        input_tensor.mul_(mask)
+        del mask
     if use_rescale and mask_rate != 1.0:
-        masked_input_tensor = torch.div(input=masked_input_tensor, other=1 - mask_rate)
-    return masked_input_tensor
+        input_tensor.div_(1 - mask_rate)
+    return input_tensor
 
 def mask_model_weights_exclusive(finetuned_models: list, pretrained_model: nn.Module, exclude_param_names_regex: list, weight_format: str,
                        weight_mask_rate: float, use_weight_rescale: bool, mask_strategy: str):
@@ -121,11 +135,13 @@ def mask_model_weights_exclusive(finetuned_models: list, pretrained_model: nn.Mo
 
     assert weight_format == "delta_weight", f"wrong setting for weight_format {weight_format}!"
     assert len(finetuned_models) == 2, f"This function currently supports exactly 2 models, but {len(finetuned_models)} were provided."
+    
     task_vectors = [TaskVector(pretrained_model=pretrained_model, finetuned_model=fm, exclude_param_names_regex=exclude_param_names_regex) for fm in finetuned_models]
     model_param_dicts = [tv.task_vector_param_dict for tv in task_vectors]
+    
+    masked_param_dicts = [{}, {}]
 
     with torch.no_grad():
-        masked_param_dicts = [{}, {}]
         for (param_name1, param_value1),(param_name2, param_value2) in zip(model_param_dicts[0].items(), model_param_dicts[1].items()):
             assert param_name1 == param_name2, f"Wrong params: param_name1 {param_name1}, param_name2 {param_name2}!"
             masked_param_dicts[0][param_name1], mask = simple_mask_input(input_tensor=param_value1, mask_rate=weight_mask_rate,

@@ -45,6 +45,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     :param tokenizers: list of tokenizers
     :return:
     """
+    
     logger.info(f"configuration is {args}")
 
     try:
@@ -53,7 +54,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     except:
         pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
-
+    
     if "GAIR/Abel-7B-002" in finetuned_model_names:
         pad_token = "<extra_id_32001><extra_id_32002><extra_id_32003><extra_id_32004><extra_id_32005><extra_id_32006><extra_id_32007><extra_id_32008><extra_id_32009><extra_id_32010><extra_id_32011><extra_id_32012><extra_id_32013><extra_id_32014><extra_id_32015><extra_id_32016><extra_id_32017><extra_id_32018><extra_id_32019><extra_id_32020><extra_id_32021><extra_id_32022><extra_id_32023><extra_id_32024><extra_id_32025><extra_id_32026><extra_id_32027><extra_id_32028><extra_id_32029><extra_id_32030><extra_id_32031><pad>"
         smart_tokenizer_and_embedding_resize(
@@ -79,7 +80,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                 model=finetuned_model,
                 tokenizer=finetuned_tokenizer,
             )
-
+    
     # set random seed to guarantee reproducibility
     set_random_seed(seed=args.seed)
     merged_model = pretrained_model
@@ -149,21 +150,21 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         llm = create_llm(finetuned_model_name=save_jp1_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
-        args.test_data_path = "juletxara/mgsm"
-        test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                      start_index=args.start_index, end_index=args.end_index, 
-                      comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
-                      log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
     elif save_math1_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
         llm = create_llm(finetuned_model_name=save_math1_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
+    
+    if args.dataset_name == "ja_mgsm":
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                      start_index=args.start_index, end_index=args.end_index, 
-                      comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
-                      log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
+                        start_index=args.start_index, end_index=args.end_index, 
+                        comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
+                        log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
+    elif args.dataset_name == "human_eval":
+        test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
+                        save_model_path=None, save_gen_results_folder=args.log_resp_path)
 
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -198,13 +199,13 @@ parser.add_argument("--subordinate_mask", action="store_true", default=False, he
 parser.add_argument("--single_exclusive_model", action="store_true", default=False, help="single_exclusive_model")
 parser.add_argument("--gradation1", type=float, default=1.0, help="gradation1")
 parser.add_argument("--gradation2", type=float, default=1.0, help="gradation2")
+parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
 
 try:
     args = parser.parse_args()
 except:
     parser.print_help()
     sys.exit()
-
 
 if __name__ == "__main__":
     # set up logger
@@ -219,6 +220,7 @@ if __name__ == "__main__":
         if merge_flag:
             finetuned_model_names.append(task_model_mapping_dict[task_name])
             merge_task_names.append(task_name)
+    args.merge_task_names = merge_task_names 
 
     pretrained_model_names = [finetuned_model_backbone_mapping_dict[finetuned_model_name] for finetuned_model_name in finetuned_model_names]
     assert len(set(pretrained_model_names)) == 1, "the backbone of all the finetuned models should be the same!"

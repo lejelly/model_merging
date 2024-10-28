@@ -1,7 +1,7 @@
 #!/bin/bash
-#PJM -L rscgrp=debug-a
-#PJM -L node=1
-#PJM -L elapse=0:20:00
+#PJM -L rscgrp=share-debug
+#PJM -L gpu=1
+#PJM -L elapse=0:30:00
 #PJM -j
 
 # module load
@@ -19,8 +19,8 @@ huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
 DATASET=ja_mgsm
 
-<< COMMENTOUT
-#MODEL_NAME=WizardLMTeam/WizardMath-7B-V1.1
+
+MODEL_NAME=WizardLMTeam/WizardMath-7B-V1.1
 #MODEL_NAME=augmxnt/shisa-gamma-7b-v1
 #MODEL_NAME=GAIR/Abel-7B-002
 #MODEL_NAME=tokyotech-llm/Swallow-MS-7b-v0.1
@@ -33,24 +33,23 @@ DATASET=ja_mgsm
 #COMP_FILE_PATH=./results_logging/single_model_inference/${DATASET}/without_DARE.txt
 #LOG_RESP_PATH=./results_logging/single_model_inference/${DATASET}/${MODEL_NAME}/withoutDARE_response.json
 
-MODEL1=WizardMath-7B-V1.1
-MODEL2=GAIR/Abel-7B-002
-COMP_FILE_PATH=./results_logging/merged_model_inference/${DATASET}/without_DARE.txt
-LOG_RESP_PATH=./results_logging/merged_model_inference/${DATASET}/${MODEL1}_${MODEL2}/${MERGE_METHOD}/withoutDARE_response.json
-COMMENTOUT
+SEED=(0)
+COMP_FILE_PATH=./results_logging/single_model_inference/${DATASET}/without_DARE.txt
+LOG_RESP_PATH=./results_logging/single_model_inference/${DATASET}/${MODEL_NAME}/withoutDARE_response.json
 
-#PROMPT_TYPE=zeroshotcot
-#python3 inference_llms_instruct_math_code.py \
-#    --dataset_name $DATASET \
-#    --finetuned_model_name $MODEL_NAME \
-#    --tensor_parallel_size 1 \
-#    --weight_mask_rate 0.0 \
-#    --comp_file_path $COMP_FILE_PATH \
-#    --prompt_type $PROMPT_TYPE \
-#    --log_resp_path $LOG_RESP_PATH
+python3 inference_llms_instruct_math_code.py \
+    --seed $SEED \
+    --dataset_name $DATASET \
+    --finetuned_model_name $MODEL_NAME \
+    --tensor_parallel_size 1 \
+    --weight_mask_rate 0.0 \
+    --comp_file_path $COMP_FILE_PATH \
+    --log_resp_path $LOG_RESP_PATH
 
+
+<< COMMENTOUT
 MODEL1=WizardMath-7B-V1.1
-MODEL2=shisa-gamma-7b-v1
+MODEL2=Arithmo2-Mistral-7B
 SEED=(0)
 GRADATIONTATE=(1.0)
 MERGE_METHOD=task_arithmetic
@@ -59,6 +58,7 @@ LOG_RESP_PATH=./results_logging/weighted_task_arithmetic/${DATASET}/${MODEL1}_${
 
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
+    --dataset_name $DATASET \
     --merge_math1 --merge_jp1 \
     --merging_method_name $MERGE_METHOD \
     --scaling_coefficient 1.0 \
@@ -67,4 +67,4 @@ python3 merge_llms_instruct_math_code.py \
     --comp_file_path $COMP_FILE_PATH \
     --log_resp_path $LOG_RESP_PATH \
     --exclusive_gradation $GRADATIONTATE
-
+COMMENTOUT
