@@ -31,6 +31,8 @@ finetuned_model_backbone_mapping_dict = {
     "BioMistral/BioMistral-7B": "mistralai/Mistral-7B-v0.1",
     "upaya07/Arithmo2-Mistral-7B": "mistralai/Mistral-7B-v0.1",
     
+    "google/gemma-2-2b-jpn-it": "google/gemma-2-2b",
+    
     "rinna/llama-3-youko-8b": "meta-llama/Meta-Llama-3-8B",
     "rombodawg/Llama-3-8B-Instruct-Coder-v2": "meta-llama/Meta-Llama-3-8B",
     "lightblue/suzume-llama-3-8B-japanese": "meta-llama/Meta-Llama-3-8B",
@@ -630,7 +632,8 @@ if __name__ == "__main__":
                         choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B", "upaya07/Arithmo2-Mistral-7B",
                                  "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
                                  "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
-                                 "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf"])
+                                 "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf",
+                                 "google/gemma-2-2b-jpn-it"])
 
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
     parser.add_argument("--start_index", type=int, default=0)
@@ -668,7 +671,7 @@ if __name__ == "__main__":
     if args.dataset_name == "alpaca_eval":
         save_gen_results_folder = f"{cache_dir}/save_gen_instruct_responses_results/{args.dataset_name}/{save_model_name}"
     elif args.dataset_name in ["human_eval", "mbpp"]:
-        save_gen_results_folder = f"{cache_dir}/save_gen_codes_results/{args.dataset_name}/{save_model_name}"
+        save_gen_results_folder = f"/work/gb20/b20042/model_merging/save_gen_codes_results/{args.dataset_name}/{save_model_name}"
     else:
         save_gen_results_folder = None
         
@@ -700,8 +703,6 @@ if __name__ == "__main__":
                      args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                      just_inference=just_inference, save_model_path=save_model_path)
     
-    print("aaaa")
-    
     if args.dataset_name == "alpaca_eval":
         test_alpaca_eval(llm=llm, finetuned_model_name=args.finetuned_model_name,
                          args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
@@ -729,7 +730,6 @@ if __name__ == "__main__":
     
     else:
         assert args.dataset_name == "ja_mgsm"
-        print("bbbb")
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                   start_index=args.start_index, end_index=args.end_index, 

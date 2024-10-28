@@ -8,6 +8,10 @@ from model_merging_methods.task_vector import TaskVector, NewTaskVector
 from utils.utils import get_param_names_to_merge, get_modules_to_merge
 from model_merging_methods.mask_weights_utils import mask_model_weights,mask_model_weights_exclusive
 
+from typing import Iterator, Tuple, Dict
+
+from memory_profiler import profile
+import gc
 
 class MergingMethod:
     def __init__(self, merging_method_name: str):
@@ -19,16 +23,52 @@ class MergingMethod:
         """
         self.merging_method_name = merging_method_name
 
+    """
     def copy_params_to_model(self, params: dict, model: nn.Module):
-        """
+        
         copy parameters in "params" to the model
         :param params: dict, dictionary of parameters
         :param model: nn.Module, model that needs to copy parameters
         :return:
-        """
+        
+        
+        #with torch.no_grad():  # 不要な勾配追跡を無効化
         for param_name, param_value in model.named_parameters():
             if param_name in params:
                 param_value.data.copy_(params[param_name])
+    """
+
+    def recursive_getattr(self, obj, attr):
+        """Helper function to get nested attributes."""
+        attributes = attr.split('.')
+        for i in range(len(attributes)):
+            obj = getattr(obj, attributes[i], None)
+            if obj is None:
+                return None
+        return obj
+    
+    @profile
+    def copy_params_to_model(self, params: Iterator[Tuple[str, torch.Tensor]], model: nn.Module):
+        with torch.no_grad():
+            # paramsがNewTaskVectorの場合、その中のパラメータを取り出す（get_merged_model関数のcopy_params_to_modelに対応）
+            if isinstance(params, NewTaskVector):
+                params = params.task_vector_param_dict
+
+            # paramsが辞書の場合は.items()で処理
+            if isinstance(params, dict):
+                param_iter = params.items()
+            else:
+                # ジェネレーターであれば、そのままイテレート
+                param_iter = params
+            
+            # paramsが辞書であることを前提に処理
+            #for param_name, param_value in params:
+            for param_name, param_value in param_iter:
+                target_param = self.recursive_getattr(model, param_name)
+                if target_param is not None:
+                    target_param.copy_(param_value)
+                else:
+                    print(f"Warning: Parameter {param_name} not found in the model.")
 
     def average_merging(self, models_to_merge: list, exclude_param_names_regex: list):
         """
@@ -65,20 +105,28 @@ class MergingMethod:
         """
 
         assert isinstance(scaling_coefficient, float), "wrong type of scaling_coefficient, should be float!"
+        assert len(models_to_merge)==2, "task arithmetic only supports two models merging"
 
-        models_to_merge_task_vectors = [NewTaskVector(pretrained_model=merged_model, finetuned_model=model_to_merge, exclude_param_names_regex=exclude_param_names_regex) for model_to_merge in models_to_merge]
+        #models_to_merge_task_vectors = [NewTaskVector(pretrained_model=merged_model, finetuned_model=model_to_merge, exclude_param_names_regex=exclude_param_names_regex) for model_to_merge in models_to_merge]
 
         # iterate each individual model that needs to be merged
         with torch.no_grad():
-            # sum up the task vectors
-            merged_task_vector = gradation1 * models_to_merge_task_vectors[0] + gradation2 * models_to_merge_task_vectors[1]
-            assert len(models_to_merge_task_vectors)==2, "task arithmetic only supports two models merging"
-            #for index in range(2, len(models_to_merge_task_vectors)):
-            #    merged_task_vector = merged_task_vector + gradation2 * models_to_merge_task_vectors[index]
+            # Sum up the task vectors on GPU
+            #merged_task_vector = gradation1 * models_to_merge_task_vectors[0] + gradation2 * models_to_merge_task_vectors[1]
+            # Combine with parameters of the merged model based on scaling coefficient, still in VRAM
+            #merged_params = merged_task_vector.combine_with_pretrained_model(pretrained_model=merged_model, scaling_coefficient=scaling_coefficient)
 
-            # combine with parameters of the merged model based on scaling coefficient
-            merged_params = merged_task_vector.combine_with_pretrained_model(pretrained_model=merged_model, scaling_coefficient=scaling_coefficient)
-
+            # Move merged_params to CPU
+            #for param_name in merged_params:
+            #    merged_params[param_name] = merged_params[param_name].to("cpu")
+            
+            merged_params = NewTaskVector(pretrained_model=merged_model, finetuned_model=models_to_merge[0], exclude_param_names_regex=exclude_param_names_regex)
+            merged_params *= gradation1
+            add_vector = NewTaskVector(pretrained_model=merged_model, finetuned_model=models_to_merge[1], exclude_param_names_regex=exclude_param_names_regex)
+            add_vector *= gradation2
+            merged_params += add_vector
+            merged_params = merged_params.combine_with_pretrained_model(pretrained_model=merged_model, scaling_coefficient=scaling_coefficient)
+                
         return merged_params
 
     def fisher_merging(self, models_to_merge: list, trainers: list, exclude_param_names_regex: list, nums_fisher_examples: list, fisher_scaling_coefficients: list = None,
@@ -527,7 +575,7 @@ class MergingMethod:
             merged_params = merged_task_vector.combine_with_pretrained_model(pretrained_model=merged_model, scaling_coefficient=scaling_coefficient)
 
         return merged_params
-
+    
     def merging_models(self, merged_model: nn.Module, models_to_merge: list, exclude_param_names_regex: list, trainers: list = None, scaling_coefficient: float = 1.0,
                        nums_fisher_examples: list = None, fisher_scaling_coefficients: list = None, normalize_fisher_weight: bool = True, minimal_fisher_weight: float = 1e-6,
                        nums_regmean_examples: list = None, reduce_non_diagonal_ratio: float = 1.0, param_value_mask_rate: float = 0.8,
@@ -579,17 +627,18 @@ class MergingMethod:
                     new_models_to_merge = models_to_merge
                 if exclusive_dropout:
                     masked_param_dicts = mask_model_weights_exclusive(finetuned_models=new_models_to_merge, pretrained_model=merged_model,
-                                                        exclude_param_names_regex=exclude_param_names_regex, weight_format=weight_format,
-                                                        weight_mask_rate=0.5, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy)
+                                                            exclude_param_names_regex=exclude_param_names_regex, weight_format=weight_format,
+                                                            weight_mask_rate=0.5, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy)
                     self.copy_params_to_model(params=masked_param_dicts[0], model=new_models_to_merge[0])
                     self.copy_params_to_model(params=masked_param_dicts[1], model=new_models_to_merge[1])
-                else:
+                else:           
                     for new_model_to_merge, weight_mask_rate in zip(new_models_to_merge, weight_mask_rates):
-                        # for each individual model, mask its weight
+                        #for each individual model, mask its weight
                         masked_param_dict = mask_model_weights(finetuned_model=new_model_to_merge, pretrained_model=merged_model,
                                                             exclude_param_names_regex=exclude_param_names_regex, weight_format=weight_format,
                                                             weight_mask_rate=weight_mask_rate, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy)
-                        self.copy_params_to_model(params=masked_param_dict, model=new_model_to_merge)
+                        self.copy_params_to_model(masked_param_dict, model=new_model_to_merge)
+                    
             if mask_apply_method == "average_merging":
                 merged_params = self.average_merging(models_to_merge=new_models_to_merge, exclude_param_names_regex=exclude_param_names_regex)
             elif mask_apply_method == "task_arithmetic":
@@ -646,6 +695,11 @@ class MergingMethod:
                                             nums_regmean_examples=nums_regmean_examples, reduce_non_diagonal_ratio=reduce_non_diagonal_ratio, param_value_mask_rate=param_value_mask_rate,
                                             weight_format=weight_format, weight_mask_rates=weight_mask_rates, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy,
                                             mask_apply_method=mask_apply_method, models_use_deepcopy=models_use_deepcopy, exclusive_dropout=exclusive_dropout, gradation1=gradation1, gradation2=gradation2)
-        self.copy_params_to_model(params=merged_params, model=merged_model)
+        
+        del models_to_merge
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        self.copy_params_to_model(merged_params, model=merged_model)
 
         return merged_model
