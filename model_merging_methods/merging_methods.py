@@ -104,7 +104,7 @@ class MergingMethod:
         """
 
         assert isinstance(scaling_coefficient, float), "wrong type of scaling_coefficient, should be float!"
-        assert len(models_to_merge)==2, "task arithmetic only supports two models merging"
+        #assert len(models_to_merge)==2, "task arithmetic only supports two models merging"
 
         #models_to_merge_task_vectors = [NewTaskVector(pretrained_model=merged_model, finetuned_model=model_to_merge, exclude_param_names_regex=exclude_param_names_regex) for model_to_merge in models_to_merge]
 

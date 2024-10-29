@@ -6,9 +6,9 @@ huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 SEED=(0)
 MERGE_METHOD=task_arithmetic
 
-gr1=(0.5)
-gr2=(0.5)
-gr3=(0.5)
+gr1=(0.2)
+gr2=(0.2)
+gr3=(0.2)
 
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \

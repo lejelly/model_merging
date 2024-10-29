@@ -128,11 +128,16 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     logger.info(f"configuration is {args}")
 
     try:
-        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.float16)
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
     except:
-        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
-        pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
+        if "meta-llama/Llama-2-7b" in args.pretrained_model_name:
+            from transformers import LlamaForCausalLM, LlamaTokenizer
+            pretrained_model = LlamaForCausalLM.from_pretrained("/p-shared-4/tmp/model_merging/llama2")
+            pretrained_tokenizer = LlamaTokenizer.from_pretrained("/p-shared-4/tmp/model_merging/llama2")
+        else:
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
+            pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
     
     if "GAIR/Abel-7B-002" in finetuned_model_names:
         pad_token = "<extra_id_32001><extra_id_32002><extra_id_32003><extra_id_32004><extra_id_32005><extra_id_32006><extra_id_32007><extra_id_32008><extra_id_32009><extra_id_32010><extra_id_32011><extra_id_32012><extra_id_32013><extra_id_32014><extra_id_32015><extra_id_32016><extra_id_32017><extra_id_32018><extra_id_32019><extra_id_32020><extra_id_32021><extra_id_32022><extra_id_32023><extra_id_32024><extra_id_32025><extra_id_32026><extra_id_32027><extra_id_32028><extra_id_32029><extra_id_32030><extra_id_32031><pad>"
