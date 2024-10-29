@@ -144,3 +144,7 @@ results_logging
 env_eval
 *nohup.out
 test_files
+log*
+save_gen_codes_results
+save_merge_models
+work

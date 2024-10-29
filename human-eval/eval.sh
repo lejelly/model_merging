@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 対象ディレクトリのパスを変数に代入
-TARGET_DIR="/work/gb20/b20042/model_merging/save_gen_codes_results/human_eval/exclusive/WizardMath-7B-V1.1-Arithmo2-Mistral-7B"
+TARGET_DIR="/p-shared-4/tmp/model_merging/save_gen_codes_results/human_eval/task_arithmetic/WizardMath-7B-V1.1-Arithmo2-Mistral-7B"
 
 # ファイル数をカウントする変数を初期化
 file_count=0
@@ -20,5 +20,6 @@ done
 if [[ $file_count -eq 0 ]]; then
     echo "No .jsonl files found in the directory."
 else
+
     echo "Total number of processed files: $file_count"
 fi

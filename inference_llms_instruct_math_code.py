@@ -44,6 +44,10 @@ finetuned_model_backbone_mapping_dict = {
     "Xwin-LM/Xwin-Math-13B-V1.0": "meta-llama/Llama-2-13b-hf",
     "layoric/llama-2-13b-code-alpaca": "meta-llama/Llama-2-13b-hf",
     "meta-llama/CodeLlama-13b-hf": "meta-llama/Llama-2-13b-hf",
+    
+    "meta-llama/Llama-2-7b-chat-hf": "meta-llama/Llama-2-7b",
+    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
+    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
 }
 
 
@@ -225,9 +229,9 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
     gsm8k_answers = gsm8k_answers[start_index:end_index]
     batch_gsm8k_ins = batch_data(gsm8k_ins, batch_size=60)
 
-    #stop_tokens = ["Instruction:", "Instruction", "Response:", "Response"]
-    #sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024, stop=stop_tokens)
-    sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024)
+    stop_tokens = ["Instruction:", "Instruction", "Response:", "Response"]
+    sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024, stop=stop_tokens)
+    #sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024)
     logger.info(f"sampling params is {sampling_params}")
 
     res_completions = []
@@ -260,7 +264,7 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
         shutil.rmtree(save_model_path, ignore_errors=True)
 
     if comp_file_path is not None:
-        result_message = f"accuracy: {accuracy}, drop_rate: {drop_rate}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
+        result_message = f"accuracy: {accuracy}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
         output_to_comparefile(comp_file_path, result_message)
         
     del llm
@@ -268,7 +272,7 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
     
 
 
-def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None):
+def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, comp_file_path=None, model_name=None, prompt_type=None):
     hendrycks_math_ins = []
     hendrycks_math_answers = []
     problem_prompt = get_math_task_prompt()
@@ -310,6 +314,11 @@ def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start
     logger.info(f"data index starts from {start_index}, ends at {end_index}")
     logger.info(f"MATH test data length is {len(results)}, accuracy is {accuracy}")
     logger.info(args)
+    
+    if comp_file_path is not None:
+        result_message = f"accuracy: {accuracy}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
+        output_to_comparefile(comp_file_path, result_message)
+    
     if save_model_path is not None:
         shutil.rmtree(save_model_path, ignore_errors=True)
 
@@ -633,7 +642,7 @@ if __name__ == "__main__":
                                  "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
                                  "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
                                  "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf",
-                                 "google/gemma-2-2b-jpn-it"])
+                                 "google/gemma-2-2b-jpn-it", "meta-llama/Llama-2-7b-chat-hf", "TIGER-Lab/MAmmoTH-7B", "mrm8488/llama-2-coder-7b"])
 
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
     parser.add_argument("--start_index", type=int, default=0)

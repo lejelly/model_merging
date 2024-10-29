@@ -9,6 +9,5 @@ accelerate
 jsonlines
 Fraction
 ninja
-flash-attn
 fasttext
 matplotlib

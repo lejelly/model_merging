@@ -14,6 +14,11 @@ from utils.utils import set_random_seed, smart_tokenizer_and_embedding_resize, c
 from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test_gsm8k, test_hendrycks_math, test_human_eval, test_mbpp, test_ja_mgsm
 from utils.load_config import cache_dir
 
+import numpy as np
+from typing import List
+from transformers import PreTrainedModel
+from tqdm import tqdm
+
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
     "jp2": "tokyotech-llm/Swallow-MS-7b-v0.1",
@@ -21,6 +26,11 @@ task_model_mapping_dict = {
     "math2": "GAIR/Abel-7B-002",
     "math3": "upaya07/Arithmo2-Mistral-7B",
     "bio": "BioMistral/BioMistral-7B",
+    
+    "instruct": "meta-llama/Llama-2-7b-chat-hf",
+    "math": "TIGER-Lab/MAmmoTH-7B",
+    "code": "mrm8488/llama-2-coder-7b",
+    
 }
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -29,7 +39,76 @@ finetuned_model_backbone_mapping_dict = {
     "tokyotech-llm/Swallow-MS-7b-v0.1": "mistralai/Mistral-7B-v0.1",
     "BioMistral/BioMistral-7B": "mistralai/Mistral-7B-v0.1",
     "upaya07/Arithmo2-Mistral-7B": "mistralai/Mistral-7B-v0.1",
+    "meta-llama/Llama-2-7b-chat-hf": "meta-llama/Llama-2-7b",
+    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
+    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
 }
+
+def metagpt(pretrained_model: PreTrainedModel, 
+            models_to_merge: List[PreTrainedModel]) -> np.ndarray:
+    """
+    Calculate optimal lambda coefficients for merging HuggingFace transformer models.
+    
+    Args:
+        pretrained_model (PreTrainedModel): Base pre-trained model (θ0)
+        models_to_merge (List[PreTrainedModel]): List of fine-tuned models (θt)
+        
+    Returns:
+        np.ndarray: Array of lambda coefficients for each model
+    """
+    # Initialize storage for squared norms
+    norms = []
+    denominator = 0.0
+    
+    # Process one model at a time
+    for finetuned_model in tqdm(models_to_merge, desc="Calculating lambdas"):
+        squared_norm = 0.0
+        
+        # Process parameters layer by layer to save memory
+        for (name, param_0), (_, param_t) in zip(pretrained_model.named_parameters(), 
+                                                finetuned_model.named_parameters()):
+            # Convert to CPU and float32 for numerical stability
+            param_0_cpu = param_0.detach().cpu().to(torch.float32)
+            param_t_cpu = param_t.detach().cpu().to(torch.float32)
+            
+            # Calculate difference
+            diff = param_t_cpu - param_0_cpu
+            
+            # Accumulate squared norm
+            squared_norm += torch.sum(diff * diff).item()
+            
+            # Free memory
+            del param_0_cpu, param_t_cpu, diff
+            torch.cuda.empty_cache()
+        
+        norms.append(squared_norm)
+        denominator += squared_norm
+    
+    # Calculate lambda values
+    lambdas = np.array(norms) / denominator
+    
+    return lambdas
+
+def print_lambda_distribution(lambdas: np.ndarray, model_names: List[str] = None):
+    """
+    Print the distribution of lambda values for analysis.
+    
+    Args:
+        lambdas (np.ndarray): Calculated lambda values
+        model_names (List[str], optional): Names of the models for reference
+    """
+    print("\nLambda Distribution:")
+    print("-" * 40)
+    
+    for i, lambda_val in enumerate(lambdas):
+        model_name = f"Model {i+1}" if model_names is None else model_names[i]
+        print(f"{model_name}: {lambda_val:.4f} ({lambda_val*100:.1f}%)")
+    
+    print("-" * 40)
+    print(f"Sum of lambdas: {np.sum(lambdas):.6f}")
+    print(f"Max lambda: {np.max(lambdas):.4f}")
+    print(f"Min lambda: {np.min(lambdas):.4f}")
+
 
 def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list, merge_task_names: list, models_to_merge: list, trainers: list, logger: logging.Logger,
                           merging_method: MergingMethod, tokenizers: list):
@@ -85,6 +164,18 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     set_random_seed(seed=args.seed)
     merged_model = pretrained_model
     
+    if args.metagpt:
+        lambdas = metagpt(pretrained_model, models_to_merge)
+        print_lambda_distribution(lambdas, finetuned_model_names)
+        args.gradation1 = lambdas[0]
+        args.gradation2 = lambdas[1]
+        args.gradation3 = lambdas[2]
+        print()
+        print("args.gradation1: ", args.gradation1)
+        print("args.gradation2: ", args.gradation2)
+        print("args.gradation3: ", args.gradation3)
+        print()
+            
     if args.single_exclusive_model:
         masked_param_dicts = mask_model_weights_exclusive(finetuned_models=models_to_merge, pretrained_model=merged_model, 
                                                         exclude_param_names_regex=[], weight_format=args.weight_format,
@@ -117,24 +208,19 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                     models_use_deepcopy=False,
                                                     exclusive_dropout=args.exclusive_dropout,
                                                     gradation1=args.gradation1,
-                                                    gradation2=args.gradation2)
+                                                    gradation2=args.gradation2,
+                                                    gradation3=args.gradation3)
 
-    save_jp1_model_path = save_jp2_model_path = save_bio_model_path = save_math1_model_path = save_math2_model_path = save_math3_model_path = None
-    if args.merge_jp1:
-        save_jp1_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/jp1/{args.save_model_name}"
-    if args.merge_jp2:
-        save_jp2_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/jp2/{args.save_model_name}"
-    if args.merge_bio:
-        save_bio_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/bio/{args.save_model_name}"
-    if args.merge_math1:
-        save_math1_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math1/{args.save_model_name}"
-    if args.merge_math2:
-        save_math2_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math2/{args.save_model_name}"
-    if args.merge_math3:
-        save_math3_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math3/{args.save_model_name}"
+    save_instruct_model_path = save_math_model_path = save_code_model_path = None
+    if args.merge_instruct:
+        save_instruct_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/instruct/{args.save_model_name}"
+    if args.merge_math:
+        save_math_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math/{args.save_model_name}"
+    if args.merge_code:
+        save_code_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/code/{args.save_model_name}"
 
     # since the tokenizers of different tasks are different, we need to save them (together with the model) separately
-    save_model_paths = [save_jp1_model_path, save_jp2_model_path, save_bio_model_path, save_math1_model_path, save_math2_model_path, save_math3_model_path]
+    save_model_paths = [save_instruct_model_path, save_math_model_path, save_code_model_path]
     index = 0
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -144,27 +230,55 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
             index += 1
     logger.info(f"models are saved")
     del merged_model, tokenizers
+    torch.cuda.empty_cache()
     
-    if save_jp1_model_path is not None:
+    if save_instruct_model_path is not None:
+        logger.info(f"evaluating merged model on instruct task...")
+        llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,
+                         args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                         just_inference=True, save_model_path=None)
+        save_gen_results_folder = f"./save_gen_instruct_responses_results/{'_'.join(merge_task_names)}/alpaca_eval/{args.save_model_name}"
+        os.makedirs(save_gen_results_folder, exist_ok=True)
+        test_alpaca_eval(llm=llm, finetuned_model_name=save_instruct_model_path,
+                         args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
+                         save_model_path=None, save_gen_results_folder=save_gen_results_folder)
+
+    if save_math_model_path is not None:
         logger.info(f"evaluating merged model on math task...")
-        llm = create_llm(finetuned_model_name=save_jp1_model_path, pretrained_model_name=args.pretrained_model_name,
-                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
-                            just_inference=True, save_model_path=None)
-    elif save_math1_model_path is not None:
-        logger.info(f"evaluating merged model on math task...")
-        llm = create_llm(finetuned_model_name=save_math1_model_path, pretrained_model_name=args.pretrained_model_name,
-                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
-                            just_inference=True, save_model_path=None)
+        llm = create_llm(finetuned_model_name=save_math_model_path, pretrained_model_name=args.pretrained_model_name,
+                         args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                         just_inference=True, save_model_path=None)
+        test_data_path = "math_code_data/gsm8k_test.jsonl"
+        test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                   start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+        test_data_path = "math_code_data/MATH_test.jsonl"
+        test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=None)
+
+    if save_code_model_path is not None:
+        logger.info(f"evaluating merged model on code task...")
+        llm = create_llm(finetuned_model_name=save_code_model_path, pretrained_model_name=args.pretrained_model_name,
+                         args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                         just_inference=True, save_model_path=None)
+        save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/human_eval/{args.save_model_name}"
+        os.makedirs(save_gen_results_folder, exist_ok=True)
+        test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
+                        save_model_path=None, save_gen_results_folder=save_gen_results_folder)
+        save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/mbpp/{args.save_model_name}"
+        os.makedirs(save_gen_results_folder, exist_ok=True)
+        test_data_path = "math_code_data/mbpp.test.jsonl"
+        test_mbpp(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                  start_index=args.start_index, end_index=args.end_index,
+                  save_model_path=None, save_gen_results_folder=save_gen_results_folder)
     
+    """
     if args.dataset_name == "ja_mgsm":
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                         start_index=args.start_index, end_index=args.end_index, 
                         comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
                         log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
-    elif args.dataset_name == "human_eval":
-        test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
-                        save_model_path=None, save_gen_results_folder=args.log_resp_path)
+    """
 
     for save_model_path in save_model_paths:
         if save_model_path is not None:
@@ -178,6 +292,9 @@ parser.add_argument("--merge_bio", action="store_true", default=False, help="whe
 parser.add_argument("--merge_math1", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merge_math2", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merge_math3", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--merge_instruct", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--merge_math", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--merge_code", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merging_method_name", type=str, default="average_merging", help="name of the method to merge models",
                     choices=["average_merging", "task_arithmetic", "mask_merging", "ties_merging"])
 parser.add_argument("--scaling_coefficient", type=float, default=1.0, help="scaling coefficient to merge the task vector")
@@ -199,7 +316,9 @@ parser.add_argument("--subordinate_mask", action="store_true", default=False, he
 parser.add_argument("--single_exclusive_model", action="store_true", default=False, help="single_exclusive_model")
 parser.add_argument("--gradation1", type=float, default=1.0, help="gradation1")
 parser.add_argument("--gradation2", type=float, default=1.0, help="gradation2")
-parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
+parser.add_argument("--gradation3", type=float, default=1.0, help="gradation3")
+parser.add_argument("--dataset_name", type=str, default=None, help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
+parser.add_argument("--metagpt", action="store_true", default=False, help="metagpt")
 
 try:
     args = parser.parse_args()
@@ -213,10 +332,10 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    assert sum([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio]) >= 2, "should merge two tasks at least!"
+    assert sum([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code]) >= 2, "should merge two tasks at least!"
     finetuned_model_names = []
     merge_task_names = []
-    for merge_flag, task_name in zip([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio], ["math1", "math2", "math3", "jp1", "jp2", "bio"]):
+    for merge_flag, task_name in zip([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code], ["math1", "math2", "math3", "jp1", "jp2", "bio", "instruct", "math", "code"]):
         if merge_flag:
             finetuned_model_names.append(task_model_mapping_dict[task_name])
             merge_task_names.append(task_name)
@@ -230,7 +349,7 @@ if __name__ == "__main__":
     if args.merging_method_name == "average_merging":
         args.save_model_name = f"{args.merging_method_name}"
     elif args.merging_method_name == "task_arithmetic" or args.merging_method_name == "ties_merging":
-        args.save_model_name = f"{args.merging_method_name}_scaling_coefficient_{args.scaling_coefficient}_grad1_{args.gradation1}_grad2_{args.gradation2}"
+        args.save_model_name = f"{args.merging_method_name}_gr1_{args.gradation1}_gr2_{args.gradation2}_gr3_{args.gradation3}"
     else:
         assert args.merging_method_name == "mask_merging"
         if args.mask_apply_method == "average_merging":

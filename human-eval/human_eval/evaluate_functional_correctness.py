@@ -23,13 +23,13 @@ def entry_point(
     outputpath = os.path.join(os.path.dirname(sample_file) ,"result")
     os.makedirs(outputpath, exist_ok=True)
     out_file = os.path.join(outputpath,"results.txt")
-    pattern = r"(seed\d+_gr1_\d+\.\d+_gr2_\d+\.\d+)"
+    pattern = r"(seed\d+)"
     match = re.search(pattern, sample_file)
-    params = match.group(1)
+    #params = match.group(1)
     with open(out_file, "a" if os.path.exists(out_file) else "w") as file:
         if os.path.exists(out_file):
             file.write("\n")
-        file.write(f"prams: {params}, pass@1: {results}")
+        file.write(f"prams: , pass@1: {results}")
     #print(results)
 
 def main():

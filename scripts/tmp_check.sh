@@ -1,13 +1,22 @@
 #!/bin/bash
 
-mode=${1:-None}
-dataset=human_eval
-model1=WizardMath-7B-V1.1
-model2=Arithmo2-Mistral-7B
+source work/bin/activate
+source import-env.sh .env
+huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
+SEED=(0)
+MERGE_METHOD=task_arithmetic
 
-#log_path=/work/gb20/b20042/model_merging/save_gen_codes_results/tmp_exlusive_dare
-log_path=/work/gb20/b20042/model_merging/save_gen_codes_results/${dataset}/${mode}/${model1}-${model2}
+gr1=(0.5)
+gr2=(0.5)
+gr3=(0.5)
 
-grad1=0.8
-grad2=0.2
-pjsub -g gb20 -x grad1=${grad1},grad2=${grad2},dataset=${dataset},model1=${model1},model2=${model2},mode=${mode},log_path=${log_path}  scripts/tmp.sh 
+python3 merge_llms_instruct_math_code.py \
+    --seed $SEED \
+    --merge_instruct --merge_math --merge_code \
+    --merging_method_name $MERGE_METHOD \
+    --scaling_coefficient 1.0 \
+    --tensor_parallel_size 1 \
+    --weight_mask_rate 0.0 \
+    --gradation1 $gr1 \
+    --gradation2 $gr2 \
+    --gradation3 $gr3 \

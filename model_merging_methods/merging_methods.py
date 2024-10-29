@@ -47,7 +47,6 @@ class MergingMethod:
                 return None
         return obj
     
-    @profile
     def copy_params_to_model(self, params: Iterator[Tuple[str, torch.Tensor]], model: nn.Module):
         with torch.no_grad():
             # paramsがNewTaskVectorの場合、その中のパラメータを取り出す（get_merged_model関数のcopy_params_to_modelに対応）
@@ -94,7 +93,7 @@ class MergingMethod:
 
         return averaged_params
 
-    def task_arithmetic(self, merged_model: nn.Module, models_to_merge: list, exclude_param_names_regex: list, scaling_coefficient: float = 1.0, gradation1: float = 1.0, gradation2: float = 1.0):
+    def task_arithmetic(self, merged_model: nn.Module, models_to_merge: list, exclude_param_names_regex: list, scaling_coefficient: float = 1.0, gradation1: float = 1.0, gradation2: float = 1.0, gradation3: float = 1.0):
         """
         task arithmetic method
         :param merged_model: nn.Module, the merged model
@@ -124,6 +123,9 @@ class MergingMethod:
             merged_params *= gradation1
             add_vector = NewTaskVector(pretrained_model=merged_model, finetuned_model=models_to_merge[1], exclude_param_names_regex=exclude_param_names_regex)
             add_vector *= gradation2
+            merged_params += add_vector
+            add_vector = NewTaskVector(pretrained_model=merged_model, finetuned_model=models_to_merge[2], exclude_param_names_regex=exclude_param_names_regex)
+            add_vector *= gradation3
             merged_params += add_vector
             merged_params = merged_params.combine_with_pretrained_model(pretrained_model=merged_model, scaling_coefficient=scaling_coefficient)
                 
@@ -580,7 +582,7 @@ class MergingMethod:
                        nums_fisher_examples: list = None, fisher_scaling_coefficients: list = None, normalize_fisher_weight: bool = True, minimal_fisher_weight: float = 1e-6,
                        nums_regmean_examples: list = None, reduce_non_diagonal_ratio: float = 1.0, param_value_mask_rate: float = 0.8,
                        weight_format: str = "delta_weight", weight_mask_rates: list = None, use_weight_rescale: bool = True, mask_strategy: str = "random",
-                       mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False, exclusive_dropout: bool = False, gradation1: float=1.0, gradation2: float=1.0):
+                       mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False, exclusive_dropout: bool = False, gradation1: float=1.0, gradation2: float=1.0, gradation3: float=1.0):
         """
         model merging methods
         :param merged_model: nn.Module, the merged model
@@ -608,7 +610,7 @@ class MergingMethod:
             merged_params = self.average_merging(models_to_merge=models_to_merge, exclude_param_names_regex=exclude_param_names_regex)
         elif self.merging_method_name == "task_arithmetic":
             merged_params = self.task_arithmetic(merged_model=merged_model, models_to_merge=models_to_merge, exclude_param_names_regex=exclude_param_names_regex,
-                                                 scaling_coefficient=scaling_coefficient, gradation1=gradation1, gradation2=gradation2)
+                                                 scaling_coefficient=scaling_coefficient, gradation1=gradation1, gradation2=gradation2, gradation3=gradation3)
         elif self.merging_method_name == "fisher_merging":
             merged_params = self.fisher_merging(models_to_merge=models_to_merge, trainers=trainers, exclude_param_names_regex=exclude_param_names_regex,
                                                 nums_fisher_examples=nums_fisher_examples, fisher_scaling_coefficients=fisher_scaling_coefficients,
@@ -664,7 +666,7 @@ class MergingMethod:
                          nums_fisher_examples: list = None, fisher_scaling_coefficients: list = None, normalize_fisher_weight: bool = True, minimal_fisher_weight: float = 1e-6,
                          nums_regmean_examples: list = None, reduce_non_diagonal_ratio: float = 1.0, param_value_mask_rate: float = 0.8,
                          weight_format: str = "delta_weight", weight_mask_rates: list = None, use_weight_rescale: bool = True, mask_strategy: str = "random",
-                         mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False, exclusive_dropout: bool = False, gradation1: float=1.0, gradation2: float=1.0):
+                         mask_apply_method: str = "average_merging", models_use_deepcopy: bool = False, exclusive_dropout: bool = False, gradation1: float=1.0, gradation2: float=1.0, gradation3: float=1.0):
         """
         merge the parameters of models_to_merge to merged_model
         :param merged_model: nn.Module, the merged model
@@ -694,7 +696,7 @@ class MergingMethod:
                                             normalize_fisher_weight=normalize_fisher_weight, minimal_fisher_weight=minimal_fisher_weight,
                                             nums_regmean_examples=nums_regmean_examples, reduce_non_diagonal_ratio=reduce_non_diagonal_ratio, param_value_mask_rate=param_value_mask_rate,
                                             weight_format=weight_format, weight_mask_rates=weight_mask_rates, use_weight_rescale=use_weight_rescale, mask_strategy=mask_strategy,
-                                            mask_apply_method=mask_apply_method, models_use_deepcopy=models_use_deepcopy, exclusive_dropout=exclusive_dropout, gradation1=gradation1, gradation2=gradation2)
+                                            mask_apply_method=mask_apply_method, models_use_deepcopy=models_use_deepcopy, exclusive_dropout=exclusive_dropout, gradation1=gradation1, gradation2=gradation2, gradation3=gradation3)
         
         del models_to_merge
         gc.collect()
