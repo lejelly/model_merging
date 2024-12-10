@@ -342,7 +342,13 @@ def generate_instruction_following_task_prompt(instruction, is_chat_model=True):
 """
     return prompt
 
-def get_math_task_prompt(prompt_type="zeroshotcot"):
+def get_math_task_prompt(prompt_type="problem_prompt"):
+    problem_prompt = (
+        "Below is an instruction that describes a task. "
+        "Write a response that appropriately completes the request.\n\n"
+        "### Instruction:\n{instruction}\n\n### Response: Let's think step by step."
+    )
+    
     zeroshotcot =(
         "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} Give your solution in detail. In the end, write your final answer in the format of 'The answer is: <ANSWER>.'. Let's think step by step. ASSISTANT: "
     )
@@ -389,10 +395,11 @@ def get_math_task_prompt(prompt_type="zeroshotcot"):
         "ASSISTANT: "
     )
     
-    if prompt_type=="fewshotcot":
+    if prompt_type=="zeroshotcot":
+        return zeroshotcot
+    elif prompt_type=="fewshotcot":
         return fewshotcot
-    return zeroshotcot
-
+    return problem_prompt
 
 def generate_code_task_prompt(input_text):
     INSTRUCTION = f"""Below is an instruction that describes a task. Write a response that appropriately completes the request.

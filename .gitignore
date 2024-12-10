@@ -144,3 +144,12 @@ results_logging
 env_eval
 *nohup.out
 test_files
+
+
+results_meta_gpt
+llama2
+human-eval
+env_alpaca_eval
+alpaca_eval
+tmp*
+*.csv
