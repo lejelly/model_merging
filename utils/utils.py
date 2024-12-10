@@ -8,7 +8,75 @@ import torch.nn as nn
 import transformers
 from transformers import Trainer, TrainerState
 from fasttext.FastText import _FastText
+import gc
 
+def aggressive_clear_gpu_memory():
+    # 現在のメモリ状態を表示
+    print("Before cleanup:")
+    for i in range(torch.cuda.device_count()):
+        print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
+        print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
+    
+    try:
+        # 1. すべての変数を削除
+        for obj in gc.get_objects():
+            try:
+                if torch.is_tensor(obj):
+                    del obj
+                elif hasattr(obj, 'cache_dir'):
+                    del obj
+                elif hasattr(obj, 'state_dict'):
+                    del obj
+            except Exception:
+                pass
+
+        # 2. キューに入っているすべてのGPUコマンドを同期
+        torch.cuda.synchronize()
+
+        # 3. 各GPUのストリームを同期
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                with torch.cuda.device(f'cuda:{i}'):
+                    torch.cuda.synchronize()
+                    current_stream = torch.cuda.current_stream()
+                    current_stream.synchronize()
+                    
+        # 4. CUDAキャッシュを強制的にクリア
+        torch.cuda.empty_cache()
+        
+        # 5. IPCキャッシュをクリア
+        if hasattr(torch.cuda, 'ipc_collect'):
+            torch.cuda.ipc_collect()
+        
+        # 6. ガベージコレクションを複数回実行
+        for _ in range(3):
+            gc.collect()
+        
+        # 7. 環境変数を使用してCUDAキャッシュを制限
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
+        
+        # 8. メモリの断片化を防ぐために小さなテンソルを作成して削除
+        dummy = torch.cuda.FloatTensor(1).fill_(0)
+        del dummy
+        
+    except Exception as e:
+        print(f"Error during memory cleanup: {e}")
+    
+    finally:
+        # 最終的なメモリ状態を表示
+        print("\nAfter cleanup:")
+        for i in range(torch.cuda.device_count()):
+            print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
+            print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
+
+# モデルを含むすべての変数を削除する関数
+def delete_all_models():
+    for var in list(globals()):
+        try:
+            if 'model' in var.lower() or 'llm' in var.lower():
+                del globals()[var]
+        except Exception:
+            pass
 
 def set_random_seed(seed: int = 0):
     """

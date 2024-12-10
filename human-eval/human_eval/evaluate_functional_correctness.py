@@ -22,14 +22,14 @@ def entry_point(
     results = evaluate_functional_correctness(sample_file, k, n_workers, timeout, problem_file)
     outputpath = os.path.join(os.path.dirname(sample_file) ,"result")
     os.makedirs(outputpath, exist_ok=True)
-    out_file = os.path.join(outputpath,"results.txt")
-    pattern = r"(seed\d+_gr1_\d+\.\d+_gr2_\d+\.\d+)"
-    match = re.search(pattern, sample_file)
-    params = match.group(1)
+    out_file = os.path.join(outputpath,"results_proposed.txt")
+    #pattern = r'task_arithmetic_gr1_([\d.]+)_gr2_([\d.]+)_gr3_([\d.]+).jsonl'
+    #match = re.search(pattern, sample_file)
     with open(out_file, "a" if os.path.exists(out_file) else "w") as file:
         if os.path.exists(out_file):
             file.write("\n")
-        file.write(f"prams: {params}, pass@1: {results}")
+        #file.write(f"[human eval][math:code:jp]=[{match.group(1)},{match.group(2)},{match.group(2)}], {results}")
+        file.write(f"file name: {sample_file}, pass@1: {results}")
     #print(results)
 
 def main():

@@ -22,6 +22,7 @@ from utils.evaluate_llms_utils import batch_data, extract_answer_number, extract
 from utils.load_config import cache_dir
 import transformers
 from utils.utils import LanguageDetector
+from typing import Optional, Any
 
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -44,6 +45,14 @@ finetuned_model_backbone_mapping_dict = {
     "Xwin-LM/Xwin-Math-13B-V1.0": "meta-llama/Llama-2-13b-hf",
     "layoric/llama-2-13b-code-alpaca": "meta-llama/Llama-2-13b-hf",
     "meta-llama/CodeLlama-13b-hf": "meta-llama/Llama-2-13b-hf",
+    
+    "meta-llama/Llama-2-7b-chat-hf": "meta-llama/Llama-2-7b",
+    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
+    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
+    
+    "mistralai/Mistral-7B-Instruct-v0.2": "mistralai/Mistral-7B-v0.1",
+    "TIGER-Lab/MAmmoTH2-7B": "mistralai/Mistral-7B-v0.1",
+    "Nondzu/Mistral-7B-codealpaca-lora": "mistralai/Mistral-7B-v0.1", 
 }
 
 
@@ -147,13 +156,51 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
 
     return llm
 
+def measure_execution_time(func_name: str, logger: Optional[logging.Logger] = None):
+    """
+    Function decorator to measure execution time
+    
+    Args:
+        func_name: Name of the function to be displayed in logs
+        logger: Logger instance. If None, print to stdout
+    """
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            
+            try:
+                result = func(*args, **kwargs)
+                end_time = time.time()
+                duration = end_time - start_time
+                
+                log_message = f"{func_name} execution time: {duration:.2f} seconds ({duration/60:.2f} minutes)"
+                if logger:
+                    logger.info(log_message)
+                else:
+                    print(log_message)
+                    
+                return result
+                
+            except Exception as e:
+                end_time = time.time()
+                duration = end_time - start_time
+                error_message = f"{func_name} failed after {duration:.2f} seconds: {str(e)}"
+                if logger:
+                    logger.error(error_message)
+                else:
+                    print(error_message)
+                raise
+                
+        return wrapper
+    return decorator
 
+@measure_execution_time("test_alpaca_eval")
 def test_alpaca_eval(llm, finetuned_model_name, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize,
                      save_model_path=None, save_gen_results_folder=None):
     try:
-        eval_set = datasets.load_dataset(path=os.path.join(cache_dir, "alpaca_eval"), name="alpaca_eval")["eval"]
+        eval_set = datasets.load_dataset(path=os.path.join(cache_dir, "alpaca_eval"), name="alpaca_eval", trust_remote_code=True)["eval"]
     except:
-        eval_set = datasets.load_dataset(path="tatsu-lab/alpaca_eval", name="alpaca_eval", cache_dir=cache_dir)["eval"]
+        eval_set = datasets.load_dataset(path="tatsu-lab/alpaca_eval", name="alpaca_eval", cache_dir=cache_dir, trust_remote_code=True)["eval"]
 
     instructions = []
     reference_outputs = []
@@ -207,8 +254,8 @@ def test_alpaca_eval(llm, finetuned_model_name, args, logger: logging.Logger, st
     del llm
     torch.cuda.empty_cache()
 
-
-def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, prompt_type=None, comp_file_path=None, model_name=None, drop_rate=None):
+@measure_execution_time("test_gsm8k")
+def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, prompt_type="fewshotcot", comp_file_path=None, model_name=None, drop_rate=None):
     gsm8k_ins = []
     gsm8k_answers = []
     problem_prompt = get_math_task_prompt(prompt_type)
@@ -225,9 +272,9 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
     gsm8k_answers = gsm8k_answers[start_index:end_index]
     batch_gsm8k_ins = batch_data(gsm8k_ins, batch_size=60)
 
-    #stop_tokens = ["Instruction:", "Instruction", "Response:", "Response"]
-    #sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024, stop=stop_tokens)
-    sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024)
+    stop_tokens = ["Instruction:", "Instruction", "Response:", "Response"]
+    sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024, stop=stop_tokens)
+    #sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=1024)
     logger.info(f"sampling params is {sampling_params}")
 
     res_completions = []
@@ -260,15 +307,15 @@ def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0,
         shutil.rmtree(save_model_path, ignore_errors=True)
 
     if comp_file_path is not None:
-        result_message = f"accuracy: {accuracy}, drop_rate: {drop_rate}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
+        result_message = f"[gsm8k][math:code:jp]=[{args.gradation1},{args.gradation2},{args.gradation3}], accuracy: {accuracy}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
         output_to_comparefile(comp_file_path, result_message)
         
     del llm
     torch.cuda.empty_cache()
     
 
-
-def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None):
+@measure_execution_time("test_hendrycks_math")
+def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, comp_file_path=None, model_name=None, prompt_type=None):
     hendrycks_math_ins = []
     hendrycks_math_answers = []
     problem_prompt = get_math_task_prompt()
@@ -310,13 +357,18 @@ def test_hendrycks_math(llm, test_data_path, args, logger: logging.Logger, start
     logger.info(f"data index starts from {start_index}, ends at {end_index}")
     logger.info(f"MATH test data length is {len(results)}, accuracy is {accuracy}")
     logger.info(args)
+    
+    if comp_file_path is not None:
+        result_message = f"[MATH] accuracy: {accuracy}, model_name: {model_name}, prompt: {prompt_type}, samplig_params: {sampling_params}"
+        output_to_comparefile(comp_file_path, result_message)
+    
     if save_model_path is not None:
         shutil.rmtree(save_model_path, ignore_errors=True)
 
     del llm
     torch.cuda.empty_cache()
 
-
+@measure_execution_time("test_human_eval")
 def test_human_eval(llm, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, save_gen_results_folder=None):
     problems = read_problems()
     task_ids = sorted(problems.keys())[start_index: end_index]
@@ -427,7 +479,7 @@ def test_human_eval(llm, args, logger: logging.Logger, start_index=0, end_index=
     del llm
     torch.cuda.empty_cache()
 
-
+@measure_execution_time("test_mbpp")
 def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, save_gen_results_folder=None):
     problems = read_mbpp(test_data_path)
     task_ids = sorted(problems.keys())[start_index: end_index]
@@ -554,7 +606,8 @@ def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, 
     del llm
     torch.cuda.empty_cache()
 
-def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None, log_resp_path=None, gradation1=None, gradation2=None):
+@measure_execution_time("ja_mgsm")
+def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, comp_file_path=None, model_name=None, drop_rate=None, log_resp_path=None, gradation1=None, gradation2=None, gradation3=None):
     try:
         eval_set = datasets.load_dataset(path="juletxara/mgsm", split="test", name="ja")
         eval_set = eval_set.select_columns(["question", "answer_number"])
@@ -610,8 +663,8 @@ def test_ja_mgsm(llm, test_data_path, args, logger: logging.Logger, start_index=
         with open(log_resp_path, "w") as f:
             json.dump(all_response, f, indent=2)
 
-    if comp_file_path != None and gradation1 != None and gradation2 != None:
-        result_message = f"[math:jp]=[{gradation1},{gradation2}], accuracy: {acc}, accuracy_ja: {acc_ja}, drop_rate: {drop_rate}, model_name: {model_name}, samplig_params: {sampling_params}"
+    if comp_file_path != None:
+        result_message = f"[ja_mgsm][math:code:jp]=[{args.gradation1},{args.gradation2},{args.gradation3}], accuracy: {acc}, accuracy_ja: {acc_ja}, model_name: {model_name}, drop_rate: {drop_rate}, samplig_params: {sampling_params}"
         output_to_comparefile(comp_file_path, result_message)
         
     del llm
@@ -633,7 +686,8 @@ if __name__ == "__main__":
                                  "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
                                  "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
                                  "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf",
-                                 "google/gemma-2-2b-jpn-it"])
+                                 "google/gemma-2-2b-jpn-it", "meta-llama/Llama-2-7b-chat-hf", "TIGER-Lab/MAmmoTH-7B", "mrm8488/llama-2-coder-7b",
+                                 "mistralai/Mistral-7B-Instruct-v0.2", "TIGER-Lab/MAmmoTH2-7B", "Nondzu/Mistral-7B-codealpaca-lora",])
 
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
     parser.add_argument("--start_index", type=int, default=0)
@@ -669,7 +723,7 @@ if __name__ == "__main__":
         save_model_path = f"/data/perm/gb20/b20042/model_merge/save_models/{args.dataset_name}/{save_model_name}"
         just_inference = False
     if args.dataset_name == "alpaca_eval":
-        save_gen_results_folder = f"{cache_dir}/save_gen_instruct_responses_results/{args.dataset_name}/{save_model_name}"
+        save_gen_results_folder = f"/work/gb20/b20042/model_merging/save_gen_instruct_responses_results/{args.dataset_name}/{save_model_name}"
     elif args.dataset_name in ["human_eval", "mbpp"]:
         save_gen_results_folder = f"/work/gb20/b20042/model_merging/save_gen_codes_results/{args.dataset_name}/{save_model_name}"
     else:

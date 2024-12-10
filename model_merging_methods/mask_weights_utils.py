@@ -36,7 +36,6 @@ def mask_input_with_mask_rate(input_tensor: torch.Tensor, mask_rate: float, use_
         masked_input_tensor = torch.div(input=masked_input_tensor, other=1 - mask_rate)
     return masked_input_tensor
 
-@profile
 def mask_model_weights(finetuned_model: nn.Module, pretrained_model: nn.Module, exclude_param_names_regex: list, weight_format: str,
                        weight_mask_rate: float, use_weight_rescale: bool, mask_strategy: str):
     """

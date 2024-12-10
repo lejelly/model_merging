@@ -1,0 +1,49 @@
+
+MetaGPT STRATEGY: hierarchical_clustering: 
+[gsm8k] accuracy: 0.4116755117513268, model_name: task_arithmetic_gr1_None_gr2_None, prompt: fewshotcot, samplig_params: SamplingParams(n=1, best_of=1, presence_penalty=0.0, frequency_penalty=0.0, repetition_penalty=1.0, temperature=0.0, top_p=1.0, top_k=-1, min_p=0.0, seed=None, use_beam_search=False, length_penalty=1.0, early_stopping=False, stop=['Instruction:', 'Instruction', 'Response:', 'Response'], stop_token_ids=[], include_stop_str_in_output=False, ignore_eos=False, max_tokens=1024, min_tokens=0, logprobs=None, prompt_logprobs=None, skip_special_tokens=True, spaces_between_special_tokens=True, truncate_prompt_tokens=None)
+----------------------------------------
+TIGER-Lab/MAmmoTH2-7B: 0.1749 (17.5%)
+Nondzu/Mistral-7B-codealpaca-lora: 0.8251 (82.5%)
+----------------------------------------
+args.gradation1:  0.17489323078519503
+args.gradation2:  0.825106769214805
+
+
+MetaGPT STRATEGY: graph_laplacian: 
+[gsm8k] accuracy: 0.44579226686884005, model_name: task_arithmetic_gr1_None_gr2_None, prompt: fewshotcot, samplig_params: SamplingParams(n=1, best_of=1, presence_penalty=0.0, frequency_penalty=0.0, repetition_penalty=1.0, temperature=0.0, top_p=1.0, top_k=-1, min_p=0.0, seed=None, use_beam_search=False, length_penalty=1.0, early_stopping=False, stop=['Instruction:', 'Instruction', 'Response:', 'Response'], stop_token_ids=[], include_stop_str_in_output=False, ignore_eos=False, max_tokens=1024, min_tokens=0, logprobs=None, prompt_logprobs=None, skip_special_tokens=True, spaces_between_special_tokens=True, truncate_prompt_tokens=None)
+----------------------------------------
+TIGER-Lab/MAmmoTH2-7B: 0.2584 (25.8%)
+Nondzu/Mistral-7B-codealpaca-lora: 0.7416 (74.2%)
+----------------------------------------
+args.gradation1:  0.2583738767036534
+args.gradation2:  0.7416261232963466
+
+
+MetaGPT STRATEGY: cosine_similarity: 
+[gsm8k] accuracy: 0.06141015921152388, model_name: task_arithmetic_gr1_None_gr2_None, prompt: fewshotcot, samplig_params: SamplingParams(n=1, best_of=1, presence_penalty=0.0, frequency_penalty=0.0, repetition_penalty=1.0, temperature=0.0, top_p=1.0, top_k=-1, min_p=0.0, seed=None, use_beam_search=False, length_penalty=1.0, early_stopping=False, stop=['Instruction:', 'Instruction', 'Response:', 'Response'], stop_token_ids=[], include_stop_str_in_output=False, ignore_eos=False, max_tokens=1024, min_tokens=0, logprobs=None, prompt_logprobs=None, skip_special_tokens=True, spaces_between_special_tokens=True, truncate_prompt_tokens=None)
+----------------------------------------
+TIGER-Lab/MAmmoTH2-7B: 0.0874 (8.7%)
+Nondzu/Mistral-7B-codealpaca-lora: 0.4126 (41.3%)
+----------------------------------------
+args.gradation1:  0.08744661539259752
+args.gradation2:  0.4125533846074025
+
+
+MetaGPT STRATEGY: attention_based: 
+[gsm8k] accuracy: 0.06141015921152388, model_name: task_arithmetic_gr1_None_gr2_None, prompt: fewshotcot, samplig_params: SamplingParams(n=1, best_of=1, presence_penalty=0.0, frequency_penalty=0.0, repetition_penalty=1.0, temperature=0.0, top_p=1.0, top_k=-1, min_p=0.0, seed=None, use_beam_search=False, length_penalty=1.0, early_stopping=False, stop=['Instruction:', 'Instruction', 'Response:', 'Response'], stop_token_ids=[], include_stop_str_in_output=False, ignore_eos=False, max_tokens=1024, min_tokens=0, logprobs=None, prompt_logprobs=None, skip_special_tokens=True, spaces_between_special_tokens=True, truncate_prompt_tokens=None)
+----------------------------------------
+TIGER-Lab/MAmmoTH2-7B: 0.0874 (8.7%)
+Nondzu/Mistral-7B-codealpaca-lora: 0.4126 (41.3%)
+----------------------------------------
+args.gradation1:  0.08744661539259752
+args.gradation2:  0.4125533846074025
+
+
+MetaGPT STRATEGY: multitask_learning: 
+[gsm8k] accuracy: 0.4116755117513268, model_name: task_arithmetic_gr1_None_gr2_None, prompt: fewshotcot, samplig_params: SamplingParams(n=1, best_of=1, presence_penalty=0.0, frequency_penalty=0.0, repetition_penalty=1.0, temperature=0.0, top_p=1.0, top_k=-1, min_p=0.0, seed=None, use_beam_search=False, length_penalty=1.0, early_stopping=False, stop=['Instruction:', 'Instruction', 'Response:', 'Response'], stop_token_ids=[], include_stop_str_in_output=False, ignore_eos=False, max_tokens=1024, min_tokens=0, logprobs=None, prompt_logprobs=None, skip_special_tokens=True, spaces_between_special_tokens=True, truncate_prompt_tokens=None)
+----------------------------------------
+TIGER-Lab/MAmmoTH2-7B: 0.1749 (17.5%)
+Nondzu/Mistral-7B-codealpaca-lora: 0.8251 (82.5%)
+----------------------------------------
+args.gradation1:  0.17489323078519503
+args.gradation2:  0.825106769214805
