@@ -707,3 +707,134 @@ def calculate_lambda_full(theta_0_model, theta_t_models, random_state=42):
     fig.savefig('/work/gb20/b20042/model_merging/figs/math_code_jp/task_visualization.png', dpi=300, bbox_inches='tight')
     
     return lambda_list
+
+def analyze_task_vectors(
+    pretrained_model: PreTrainedModel,
+    models_to_merge: List[PreTrainedModel]
+) -> dict:
+    """
+    タスクベクトル間のグラム行列を計算し、その性質を分析する
+
+    Args:
+        pretrained_model: 基準となる事前学習済みモデル
+        models_to_merge: マージするモデルのリスト
+
+    Returns:
+        dict: 分析結果を含む辞書
+        {
+            "gram_matrix": グラム行列,
+            "has_inverse": 逆行列が存在するかどうか,
+            "condition_number": 条件数,
+            "determinant": 行列式
+        }
+    """
+    n_models = len(models_to_merge)
+    gram_matrix = np.zeros((n_models, n_models))
+    
+    # グラム行列の計算
+    for i in tqdm(range(n_models), desc="Computing Gram matrix"):
+        for j in range(i, n_models):
+            if i == j:
+                # 対角成分は二乗ノルム
+                squared_norm = TaskVectorCalculator.calculate_squared_norm(
+                    pretrained_model, models_to_merge[i]
+                )
+                gram_matrix[i, j] = squared_norm
+            else:
+                # 非対角成分は内積
+                dot_product = 0.0
+                for (param_0, param_i), (_, param_j) in zip(
+                    TaskVectorCalculator.parameter_iterator(pretrained_model, models_to_merge[i]),
+                    models_to_merge[j].named_parameters()
+                ):
+                    param_0_cpu = param_0.detach().cpu().to(torch.float32)
+                    param_i_cpu = param_i.detach().cpu().to(torch.float32)
+                    param_j_cpu = param_j.detach().cpu().to(torch.float32)
+                    
+                    diff_i = param_i_cpu - param_0_cpu
+                    diff_j = param_j_cpu - param_0_cpu
+                    
+                    dot_product += torch.sum(diff_i * diff_j).item()
+                    
+                    del param_0_cpu, param_i_cpu, param_j_cpu, diff_i, diff_j
+                    torch.cuda.empty_cache()
+                
+                gram_matrix[i, j] = dot_product
+                gram_matrix[j, i] = dot_product
+    
+    # 行列式の計算
+    det = np.linalg.det(gram_matrix)
+    
+    # 条件数の計算
+    condition_number = np.linalg.cond(gram_matrix)
+    
+    # 逆行列の存在判定
+    # 行列式がゼロに近い、または条件数が大きすぎる場合は逆行列が不安定
+    has_inverse = abs(det) > 1e-10 and condition_number < 1e15
+    
+    return {
+        "gram_matrix": gram_matrix,
+        "has_inverse": has_inverse,
+        "condition_number": condition_number,
+        "determinant": det
+    }
+    
+def calculate_optimal_lambdas(pretrained_model, models_to_merge):
+    """
+    タスクベクトル間の関係を考慮して最適なλを計算する関数
+    
+    Args:
+        pretrained_model: 事前学習済みモデル (θ₀)
+        models_to_merge: ファインチューニング済みモデルのリスト (θₖ)
+    
+    Returns:
+        最適化されたλのリスト
+    """
+    n_models = len(models_to_merge)
+    lambdas = np.zeros(n_models)
+    
+    # グラム行列の計算
+    gram_matrix = np.zeros((n_models, n_models))
+    norms = np.zeros(n_models)
+    
+    for i in range(n_models):
+        # ||θₜ - θ₀||²の計算
+        norms[i] = TaskVectorCalculator.calculate_squared_norm(
+            pretrained_model, models_to_merge[i]
+        )
+        
+        for j in range(i, n_models):
+            if i == j:
+                gram_matrix[i, j] = norms[i]
+            else:
+                # (θₖ - θ₀)(θₜ - θ₀)ᵀの計算
+                dot_product = 0.0
+                for (param_0, param_i), (_, param_j) in zip(
+                    TaskVectorCalculator.parameter_iterator(pretrained_model, models_to_merge[i]),
+                    models_to_merge[j].named_parameters()
+                ):
+                    param_0_cpu = param_0.detach().cpu().to(torch.float32)
+                    param_i_cpu = param_i.detach().cpu().to(torch.float32)
+                    param_j_cpu = param_j.detach().cpu().to(torch.float32)
+                    
+                    diff_i = param_i_cpu - param_0_cpu
+                    diff_j = param_j_cpu - param_0_cpu
+                    
+                    dot_product += torch.sum(diff_i * diff_j).item()
+                    
+                    del param_0_cpu, param_i_cpu, param_j_cpu, diff_i, diff_j
+                    torch.cuda.empty_cache()
+                
+                gram_matrix[i, j] = dot_product
+                gram_matrix[j, i] = dot_product
+    
+    # λの計算
+    for t in range(n_models):
+        numerator = 0.0
+        for k in range(n_models):
+            if k != t:
+                numerator += lambdas[k] * gram_matrix[k, t]
+        
+        lambdas[t] = 1.0 - numerator / norms[t]
+    
+    return lambdas

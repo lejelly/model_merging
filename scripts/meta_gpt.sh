@@ -7,22 +7,26 @@
 
 # module load
 source import-env.sh .env
-module load gcc/8.3.1
-module load python/3.10.13
-module load cuda/12.1
-module load cudnn/8.8.1
+#module load gcc/8.3.1
+#module load python/3.10.13
+#module load cuda/12.1
+#module load cudnn/8.8.1
 
-DATASETNAME=$dataset
+#DATASETNAME=$dataset
+DATASETNAME="ja_mgsm"
 SEED=(0)
 MERGE_METHOD=task_arithmetic
 #MERGE_METHOD=average_merging
 
-COMP_FILE_PATH=./results_metagpt/math_code_jp/metagpt/${DATASETNAME}.txt
-LOG_RESP_PATH=./results_metagpt/math_code_jp/metagpt/${DATASETNAME}/json_logs/metagpt.json
+COMP_FILE_PATH=./results_metagpt/math_code_jp/gram_matrix/${DATASETNAME}.txt
+LOG_RESP_PATH=./results_metagpt/math_code_jp/gram_matrix/${DATASETNAME}.json
 
 # environment setup
 cd $PATH_TO_WORKING_DIR
-source work/bin/activate
+#source work/bin/activate
+export TRANSFORMERS_OFFLINE=0
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export HF_ENDPOINT=https://huggingface.co
 huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
 #STRATEGY=$strategy

@@ -20,7 +20,7 @@ from typing import List
 from transformers import PreTrainedModel
 from tqdm import tqdm
 
-from proposed_methogs import WeightingStrategy, metagpt_advanced, visualize_task_similarities, calculate_lambda_optimized, calculate_lambda_full
+from proposed_methogs import WeightingStrategy, metagpt_advanced, visualize_task_similarities, calculate_lambda_optimized, calculate_lambda_full, analyze_task_vectors, calculate_optimal_lambdas
 
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
@@ -191,32 +191,35 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     
     if args.metagpt:
         with torch.no_grad():
+            print("\nAnalyzing task vectors...")
+            analysis = analyze_task_vectors(pretrained_model, models_to_merge)
+            
+            print("\nGram Matrix Analysis:")
+            print("-" * 40)
+            print(f"Gram Matrix:\n{analysis['gram_matrix']}")
+            print(f"Has stable inverse: {analysis['has_inverse']}")
+            print(f"Condition number: {analysis['condition_number']:.2e}")
+            print(f"Determinant: {analysis['determinant']:.2e}")
+            print("-" * 40)
             print()
+            
+            '''
             #print("MetaGPT STRATEGY: ", args.metagpt_strategy)
             lambdas_0 = metagpt(pretrained_model, models_to_merge)
             lambdas_alpha=calculate_lambda_optimized(pretrained_model, models_to_merge)
             #lambdas_alpha=calculate_lambda_full(pretrained_model, models_to_merge)
             '''
-            lambdas = metagpt_advanced(
-                pretrained_model,
-                models_to_merge,
-                strategy=WeightingStrategy(args.metagpt_strategy),
-            )
-            '''
-            lambdas = [a * b for a, b in zip(lambdas_0, lambdas_alpha)]
+            lambdas = calculate_optimal_lambdas(pretrained_model, models_to_merge)
             print_lambda_distribution(lambdas, finetuned_model_names)
             args.gradation1 = lambdas[0]
             args.gradation2 = lambdas[1]
             args.gradation3 = lambdas[2]
             print()
-            print("lambdas_alpha[math, code, jp]: ",lambdas_alpha)
-            print()
             print("math (gradation1): ", args.gradation1)
             print("code (gradation2): ", args.gradation2)
             print("jp (gradation3): ", args.gradation3)
             print()
-            
-    """       
+           
     if args.single_exclusive_model:
         masked_param_dicts = mask_model_weights_exclusive(finetuned_models=models_to_merge, pretrained_model=merged_model, 
                                                         exclude_param_names_regex=[], weight_format=args.weight_format,
@@ -365,20 +368,20 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     torch.cuda.empty_cache()    
     
 
-    ""
+    """
     if args.dataset_name == "ja_mgsm":
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                         start_index=args.start_index, end_index=args.end_index, 
                         comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
                         log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
-    ""
+    """
     
     for save_model_path in save_model_paths:
         if save_model_path is not None:
             shutil.rmtree(save_model_path, ignore_errors=True)
     logger.info(f"inference of merging method {args.merging_method_name} is completed")
-    """ 
+     
 
 parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_jp1", action="store_true", default=False, help="whether to merge instruct model")
