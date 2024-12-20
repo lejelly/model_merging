@@ -13,7 +13,7 @@ source import-env.sh .env
 #module load cudnn/8.8.1
 
 #DATASETNAME=$dataset
-DATASETNAME="ja_mgsm"
+DATASETNAME="human_eval"
 SEED=(0)
 MERGE_METHOD=task_arithmetic
 #MERGE_METHOD=average_merging

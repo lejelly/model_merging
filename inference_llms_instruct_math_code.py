@@ -98,24 +98,24 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
     finetuned_model.save_pretrained(save_directory=recovered_model_save_path)
     finetuned_tokenizer.save_pretrained(save_directory=recovered_model_save_path)
 
-def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
+def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None,dtype='float16'):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype=dtype, gpu_memory_utilization=0.9)
         else:
             #assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype=dtype, gpu_memory_utilization=0.9)
         assert save_model_path is None
     else:
         try:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.float16)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name))
-            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.float16)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name))
         except:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir)
-            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
+            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir)
 
 
@@ -152,7 +152,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         finetuned_model.save_pretrained(save_directory=save_model_path)
         finetuned_tokenizer.save_pretrained(save_directory=save_model_path)
         logger.info(f"model is saved")
-        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
+        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype=dtype, gpu_memory_utilization=0.9)
 
     return llm
 
@@ -755,7 +755,7 @@ if __name__ == "__main__":
     llm = create_llm(finetuned_model_name=args.finetuned_model_name,
                      pretrained_model_name=finetuned_model_backbone_mapping_dict[args.finetuned_model_name],
                      args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
-                     just_inference=just_inference, save_model_path=save_model_path)
+                     just_inference=just_inference, save_model_path=save_model_path, dtype='float16')
     
     if args.dataset_name == "alpaca_eval":
         test_alpaca_eval(llm=llm, finetuned_model_name=args.finetuned_model_name,
