@@ -20,7 +20,8 @@ from typing import List
 from transformers import PreTrainedModel
 from tqdm import tqdm
 
-from proposed_methogs import WeightingStrategy, metagpt_advanced, visualize_task_similarities, calculate_lambda_optimized, calculate_lambda_full
+from proposed_methods import metagpt, WeightingStrategy, metagpt_advanced, visualize_task_similarities, calculate_lambda_optimized, calculate_lambda_full, calc_MetaRiemann, metagpt_strict, profile_metagpt_strict, analyze_task_vectors
+from calculate_lambdas import calculate_and_save_lambdas
 
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
@@ -53,51 +54,6 @@ finetuned_model_backbone_mapping_dict = {
     "Nondzu/Mistral-7B-codealpaca-lora": "mistralai/Mistral-7B-v0.1", 
 }
 
-def metagpt(pretrained_model: PreTrainedModel, 
-            models_to_merge: List[PreTrainedModel]) -> np.ndarray:
-    """
-    Calculate optimal lambda coefficients for merging HuggingFace transformer models.
-    
-    Args:
-        pretrained_model (PreTrainedModel): Base pre-trained model (θ0)
-        models_to_merge (List[PreTrainedModel]): List of fine-tuned models (θt)
-        
-    Returns:
-        np.ndarray: Array of lambda coefficients for each model
-    """
-    # Initialize storage for squared norms
-    norms = []
-    denominator = 0.0
-    
-    # Process one model at a time
-    for finetuned_model in tqdm(models_to_merge, desc="Calculating lambdas"):
-        squared_norm = 0.0
-        
-        # Process parameters layer by layer to save memory
-        for (name, param_0), (_, param_t) in zip(pretrained_model.named_parameters(), 
-                                                finetuned_model.named_parameters()):
-            # Convert to CPU and float32 for numerical stability
-            param_0_cpu = param_0.detach().cpu().to(torch.float32)
-            param_t_cpu = param_t.detach().cpu().to(torch.float32)
-            
-            # Calculate difference
-            diff = param_t_cpu - param_0_cpu
-            
-            # Accumulate squared norm
-            squared_norm += torch.sum(diff * diff).item()
-            
-            # Free memory
-            del param_0_cpu, param_t_cpu, diff
-            torch.cuda.empty_cache()
-        
-        norms.append(squared_norm)
-        denominator += squared_norm
-    
-    # Calculate lambda values
-    lambdas = np.array(norms) / denominator
-    
-    return lambdas
-
 def print_lambda_distribution(lambdas: np.ndarray, model_names: List[str] = None):
     """
     Print the distribution of lambda values for analysis.
@@ -111,7 +67,7 @@ def print_lambda_distribution(lambdas: np.ndarray, model_names: List[str] = None
     
     for i, lambda_val in enumerate(lambdas):
         model_name = f"Model {i+1}" if model_names is None else model_names[i]
-        print(f"{model_name}: {lambda_val:.4f} ({lambda_val*100:.1f}%)")
+        print(f"{model_name}: {lambda_val:.10f} ({lambda_val*100:.1f}%)")
     
     print("-" * 40)
     print(f"Sum of lambdas: {np.sum(lambdas):.6f}")
@@ -179,44 +135,48 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     set_random_seed(seed=args.seed)
     merged_model = pretrained_model
     
-    """
     # visualize task cosine similarities
+    """
+    print(f"Visualizing task cosine similarities...")
     visualizer = visualize_task_similarities(
         pretrained_model=merged_model,
         models=models_to_merge,
-        model_names=["math", "code", "jp"],
-        save_dir="./figs/math_code_jp",
+        model_names=args.merge_task_names,
+        save_dir=f"./figs/{args.lambda_strategy}",
     )
     """
     
     if args.metagpt:
-        with torch.no_grad():
-            print()
-            #print("MetaGPT STRATEGY: ", args.metagpt_strategy)
-            lambdas_0 = metagpt(pretrained_model, models_to_merge)
-            lambdas_alpha=calculate_lambda_optimized(pretrained_model, models_to_merge)
-            #lambdas_alpha=calculate_lambda_full(pretrained_model, models_to_merge)
-            '''
-            lambdas = metagpt_advanced(
-                pretrained_model,
-                models_to_merge,
-                strategy=WeightingStrategy(args.metagpt_strategy),
-            )
-            '''
-            lambdas = [a * b for a, b in zip(lambdas_0, lambdas_alpha)]
-            print_lambda_distribution(lambdas, finetuned_model_names)
-            args.gradation1 = lambdas[0]
-            args.gradation2 = lambdas[1]
-            args.gradation3 = lambdas[2]
-            print()
-            print("lambdas_alpha[math, code, jp]: ",lambdas_alpha)
-            print()
-            print("math (gradation1): ", args.gradation1)
-            print("code (gradation2): ", args.gradation2)
-            print("jp (gradation3): ", args.gradation3)
-            print()
-            
-    """       
+        
+        print("\nAnalyzing task vectors...")
+        analysis = analyze_task_vectors(pretrained_model, models_to_merge)
+        
+        print("\nGram Matrix Analysis:")
+        print("-" * 40)
+        print(f"Gram Matrix:\n{analysis['gram_matrix']}")
+        print(f"Has stable inverse: {analysis['has_inverse']}")
+        print(f"Condition number: {analysis['condition_number']:.2e}")
+        print(f"Determinant: {analysis['determinant']:.2e}")
+        print("-" * 40)
+        print()
+        """
+        print("Start calculating lambdas...")
+        print(f"Lambda_strategy: {args.lambda_strategy}")
+        
+        strategy = WeightingStrategy(args.lambda_strategy)
+        save_dir = f"./lambdas/{'_'.join(merge_task_names)}/{strategy.value}"
+        lambdas = calculate_and_save_lambdas(
+            pretrained_model=pretrained_model,
+            models_to_merge=models_to_merge,
+            finetuned_model_names=finetuned_model_names,
+            strategy=strategy,
+            save_dir=save_dir
+        )
+        print()
+        print_lambda_distribution(lambdas, finetuned_model_names)
+        print()
+        """
+    """        
     if args.single_exclusive_model:
         masked_param_dicts = mask_model_weights_exclusive(finetuned_models=models_to_merge, pretrained_model=merged_model, 
                                                         exclude_param_names_regex=[], weight_format=args.weight_format,
@@ -248,7 +208,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                     mask_apply_method=args.mask_apply_method,
                                                     models_use_deepcopy=False,
                                                     exclusive_dropout=args.exclusive_dropout,
-                                                    gradation_coefficients=[args.gradation1, args.gradation2, args.gradation3])
+                                                    gradation_coefficients=lambdas)
 
     save_instruct_model_path = save_math_model_path = save_code_model_path = save_jp_model_path = None
     if args.merge_instruct:
@@ -378,7 +338,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         if save_model_path is not None:
             shutil.rmtree(save_model_path, ignore_errors=True)
     logger.info(f"inference of merging method {args.merging_method_name} is completed")
-    """ 
+    """
 
 parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_jp1", action="store_true", default=False, help="whether to merge instruct model")
@@ -421,6 +381,13 @@ parser.add_argument(
     choices=[s.value for s in WeightingStrategy],
     default=WeightingStrategy.COSINE_SIMILARITY.value,
     help='Weighting strategy to use'
+)
+parser.add_argument(
+    '--lambda_strategy',
+    type=str,
+    choices=[s.value for s in WeightingStrategy],
+    default=WeightingStrategy.METAGPT.value,
+    help='Lambdaの計算戦略を選択'
 )
 
 try:
