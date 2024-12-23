@@ -1,8 +1,8 @@
 #!/bin/bash
-#PJM -L rscgrp=share-debug
-#PJM --name proposed_lamdas
-#PJM -L gpu=4
-#PJM -L elapse=0:30:00
+#PJM -L rscgrp=share-short
+#PJM --name gram_matrix_4_models
+#PJM -L gpu=2
+#PJM -L elapse=1:00:00
 #PJM -j
 
 # module load
@@ -17,15 +17,15 @@ SEED=(0)
 MERGE_METHOD=task_arithmetic
 #MERGE_METHOD=average_merging
 
-COMP_FILE_PATH=./results_metagpt/math_code_jp/metagpt/${DATASETNAME}.txt
-LOG_RESP_PATH=./results_metagpt/math_code_jp/metagpt/${DATASETNAME}/json_logs/metagpt.json
+COMP_FILE_PATH=./results_metagpt/math_code_jp/Metagpt_strict/${DATASETNAME}.txt
+LOG_RESP_PATH=./results_metagpt/math_code_jp/Metagpt_strict/${DATASETNAME}/json_logs/Metagpt_strict.json
 
 # environment setup
 cd $PATH_TO_WORKING_DIR
 source work/bin/activate
 huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
-#STRATEGY=$strategy
+STRATEGY=$strategy
 #STRATEGY="cosine_similarity"
 #STRATEGY="graph_laplacian"
 #STRATEGY="hierarchical_clustering"
@@ -33,7 +33,7 @@ huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
-    --merge_math --merge_code --merge_jp \
+    --merge_math1 --merge_math2 --merge_code --merge_jp \
     --merging_method_name $MERGE_METHOD \
     --scaling_coefficient 1.0 \
     --tensor_parallel_size 1 \
@@ -41,9 +41,14 @@ python3 merge_llms_instruct_math_code.py \
     --comp_file_path $COMP_FILE_PATH \
     --log_resp_path $LOG_RESP_PATH \
     --dataset_name $DATASETNAME \
-    --metagpt 
+    --metagpt \
+    --lambda_strategy $STRATEGY
 
 
-#pjsub -g gb20 -x dataset="gsm8k" scripts/meta_gpt.sh
-#pjsub -g gb20 -x dataset="human_eval" scripts/meta_gpt.sh
-#pjsub -g gb20 -x dataset="ja_mgsm" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="human_eval",strategy="metagpt" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt" scripts/meta_gpt.sh
+
+#pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt_strict" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="human_eval",strategy="metagpt_strict" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt_strict" scripts/meta_gpt.sh

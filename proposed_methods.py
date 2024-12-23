@@ -12,8 +12,63 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import umap
+import cvxpy as cp
+import cProfile
+import pstats
+from pstats import SortKey
+import time
+import torch.cuda
+import logging
+import os
+
+def metagpt(pretrained_model: PreTrainedModel, 
+            models_to_merge: List[PreTrainedModel]) -> np.ndarray:
+    """
+    Calculate optimal lambda coefficients for merging HuggingFace transformer models.
+    
+    Args:
+        pretrained_model (PreTrainedModel): Base pre-trained model (θ0)
+        models_to_merge (List[PreTrainedModel]): List of fine-tuned models (θt)
+        
+    Returns:
+        np.ndarray: Array of lambda coefficients for each model
+    """
+    # Initialize storage for squared norms
+    norms = []
+    denominator = 0.0
+    
+    # Process one model at a time
+    for finetuned_model in tqdm(models_to_merge, desc="Calculating lambdas"):
+        squared_norm = 0.0
+        
+        # Process parameters layer by layer to save memory
+        for (name, param_0), (_, param_t) in zip(pretrained_model.named_parameters(), 
+                                                finetuned_model.named_parameters()):
+            # Convert to CPU and float32 for numerical stability
+            param_0_cpu = param_0.detach().cpu().to(torch.float32)
+            param_t_cpu = param_t.detach().cpu().to(torch.float32)
+            
+            # Calculate difference
+            diff = param_t_cpu - param_0_cpu
+            
+            # Accumulate squared norm
+            squared_norm += torch.sum(diff * diff).item()
+            
+            # Free memory
+            del param_0_cpu, param_t_cpu, diff
+            torch.cuda.empty_cache()
+        
+        norms.append(squared_norm)
+        denominator += squared_norm
+    
+    # Calculate lambda values
+    lambdas = np.array(norms) / denominator
+    
+    return lambdas
 
 class WeightingStrategy(Enum):
+    METAGPT = "metagpt"
+    METAGPT_STRICT = "metagpt_strict"
     COSINE_SIMILARITY = "cosine_similarity"
     GRAPH_LAPLACIAN = "graph_laplacian"
     HIERARCHICAL_CLUSTERING = "hierarchical_clustering"
@@ -707,3 +762,342 @@ def calculate_lambda_full(theta_0_model, theta_t_models, random_state=42):
     fig.savefig('/work/gb20/b20042/model_merging/figs/math_code_jp/task_visualization.png', dpi=300, bbox_inches='tight')
     
     return lambda_list
+
+
+def calc_MetaRiemann(theta_0, theta_t_list):
+    """
+    calc_MetaRiemann:
+    与えられた事前学習モデルtheta_0と、各タスクに対してファインチューニングされたモデルtheta_t_listから、
+    MetaRiemannフレームワーク下で導出されたλ（タスクごとの重み係数）を計算する関数。
+
+    引数:
+        theta_0: 事前学習後のモデル（nn.Moduleオブジェクト）
+        theta_t_list: ファインチューニング済みモデル（nn.Moduleオブジェクト）のリスト
+                      例: [theta_1, theta_2, ..., theta_T]
+
+    戻り値:
+        lambda_list: 各タスクに対応した重み係数を格納したリスト (pythonのlist)
+                     例: [lambda_1, lambda_2, ..., lambda_T]
+
+    条件:
+        - ここではQ行列(計量)は単純化のため恒等行列と仮定する（NTKやFisher情報を計測しない場合）
+        - Σ行列は、Δ_i = theta_i - theta_0 について Σ_{jk} = Δ_j^T Δ_k で定義
+        - 実世界でNTKやFisher情報行列を用いる場合は、適切な計量Qで内積を置き換える必要がある。
+        - theta_0, theta_t_listは同じアーキテクチャのモデルで、重みパラメータ順序が対応していると仮定。
+        - 各モデルパラメータを展開し、1次元テンソルとして扱う。
+
+    手順:
+        1. theta_0, theta_t_listからパラメータベクトルを抽出
+        2. Δ_i = θ_i - θ_0 を計算
+        3. Σ行列を生成(サイズ: T x T)
+        4. Σ^-1 を計算
+        5. λ = (Σ^-1 * 1) / (1^T Σ^-1 1) を求める
+    """
+    # 1. モデルパラメータをtorch.Tensorとして取り出すためのヘルパー関数
+    def model_to_vector(model):
+        params = []
+        for p in model.parameters():
+            # パラメータをflattenし、リストに追加
+            params.append(p.data.view(-1))
+        return torch.cat(params)
+
+    # 事前学習モデルパラメータベクトル
+    theta_0_vec = model_to_vector(theta_0).float()
+    # ファインチューニング後モデルパラメータベクトルのリスト
+    theta_t_vec_list = [model_to_vector(m).float() for m in theta_t_list]
+
+    # タスク数
+    T = len(theta_t_list)
+
+    # 2. Δ_i = θ_i - θ_0
+    delta_list = [theta_t_vec_list[i] - theta_0_vec for i in range(T)]
+
+    # 3. Σ行列の生成
+    # Σ_{jk} = Δ_j^T Δ_k (ここでは単純な内積を用いる)
+    Sigma = torch.zeros(T, T, dtype=theta_0_vec.dtype, device=theta_0_vec.device)
+    for j in range(T):
+        for k in range(T):
+            Sigma[j, k] = torch.dot(delta_list[j], delta_list[k])
+
+    # 4. Σ^-1 の計算
+    Sigma_inv = torch.inverse(Sigma)
+
+    # 5. λ = (Σ^-1 * 1) / (1^T Σ^-1 1)
+    ones = torch.ones(T, dtype=theta_0_vec.dtype, device=theta_0_vec.device)
+    numerator = Sigma_inv @ ones
+    denominator = ones @ numerator
+    lambda_vec = numerator / denominator
+
+    # pythonリストに変換
+    lambda_list = lambda_vec.cpu().numpy().tolist()
+
+    return lambda_list
+
+def calc_MetaRiemann_QP(theta_0, theta_t_list):
+    """
+    calc_MetaRiemann_QP:
+    与えられた事前学習モデル theta_0 と、各タスクに対してファインチューニング済みモデル theta_t_list から、
+    二次計画問題(QP)としてタスクごとの重み λ を決定する関数。
+    
+    条件:
+        0 <= λ_i <= 1
+        sum(λ_i) <= T (タスク数)
+    の制約下で、ALD近似に対応する二次形式の目的関数を最小化する。
+
+    ここでは簡略化のため、計量 Q は単位行列相当を仮定し、Σ行列を
+    Σ_{jk} = Δ_j^T Δ_k で定義する。
+    Δ_i = θ_i - θ_0 は各タスクモデルパラメータベクトルの差分。
+
+    目的関数:
+        min (1/2)*λ^T Σ λ
+    subject to:
+        0 <= λ_i <= 1, for i=1,...,T
+        sum(λ_i) <= T
+
+    引数:
+        theta_0: 事前学習済みモデル (nn.Module)
+        theta_t_list: [theta_1, theta_2, ..., theta_T] ファインチューニング済みモデルリスト (nn.Moduleのリスト)
+
+    戻り値:
+        lambda_list: 求められた λ のリスト [λ_1, λ_2, ..., λ_T]
+
+    前提:
+        - theta_0, theta_t_list内のモデルは同じアーキテクチャでパラメータ順序が対応している。
+        - モデルパラメータはCPU/GPU上にあり、同一device上にあることを想定。
+        - cvxpyで解くため、Σ行列はCPU上のnumpy配列に変換して利用。
+        - 実際にNTKやFisher情報を用いる場合は、Σ生成部分を置き換えることが可能。
+    """
+
+    # 1. モデルからパラメータベクトルを抽出するヘルパー関数
+    def model_to_vector(model):
+        params = []
+        for p in model.parameters():
+            # パラメータをflatten
+            params.append(p.data.view(-1))
+        return torch.cat(params)
+
+    # 事前学習モデルパラメータベクトル
+    theta_0_vec = model_to_vector(theta_0).float()
+    # ファインチューニング後モデルパラメータベクトルのリスト
+    theta_t_vec_list = [model_to_vector(m).float() for m in theta_t_list]
+
+    # タスク数
+    T = len(theta_t_list)
+
+    # 2. Δ_i = θ_i - θ_0
+    delta_list = [theta_t_vec_list[i] - theta_0_vec for i in range(T)]
+
+    # 3. Σ行列 (T x T) の生成: Σ_{jk} = Δ_j^T Δ_k
+    device = delta_list[0].device
+    dtype = delta_list[0].dtype
+    Sigma = torch.zeros(T, T, dtype=dtype, device=device)
+    for j in range(T):
+        for k in range(T):
+            Sigma[j, k] = torch.dot(delta_list[j], delta_list[k])
+
+    # CPU上のnumpy配列へ転送 (cvxpyはCPU上の計算を行う)
+    Sigma_np = Sigma.cpu().numpy()
+
+    # 4. QP定式化: 
+    # min (1/2)*λ^T Σ λ
+    # s.t. 0 <= λ_i <= 1, sum(λ_i) <= T
+    lamb = cp.Variable(T)
+    objective = 0.5 * cp.quad_form(lamb, Sigma_np)
+    constraints = [lamb >= 0, lamb <= 1, cp.sum(lamb) <= T]
+
+    # 問題定義
+    prob = cp.Problem(cp.Minimize(objective), constraints)
+
+    # 5. ソルバで最適化実行
+    # OSQPなどのソルバを用いる
+    prob.solve(solver=cp.OSQP, verbose=False)
+
+    # 最適解の取得
+    lambda_list = lamb.value.tolist()
+
+    return lambda_list
+
+def metagpt_strict(
+    pretrained_model: PreTrainedModel, 
+    models_to_merge: List[PreTrainedModel]
+) -> np.ndarray:
+    """
+    Calculate optimal lambda coefficients (λ1, λ2, ..., λT) by solving
+       M * λ = b
+    where
+       - M_{t,t} = ||θ_t - θ0||^2
+       - M_{t,k} = (θ_t - θ0)⋅(θ_k - θ0), for k != t
+       - b_t = (||θ_t - θ0||^2)^2 / a_sum  +  (1 / a_sum) Σ_{k≠t} [ ||θ_k - θ0||^2 * (θ_t - θ0)⋅(θ_k - θ0) ]
+         (  a_sum = Σ_t ||θ_t - θ0||^2  )
+    
+    Args:
+        pretrained_model (PreTrainedModel): Base pre-trained model (θ0).
+        models_to_merge (List[PreTrainedModel]): List of T fine-tuned models (θ1, θ2, ..., θT).
+
+    Returns:
+        np.ndarray: Array of lambda coefficients (λ1, λ2, ..., λT).
+    """
+
+    T = len(models_to_merge)
+    # (1) Compute a_t = ||θ_t - θ0||^2
+    print(f"# (1) Compute a_t = ||θ_t - θ0||^2, a_sum...")
+    a = np.zeros(T, dtype=np.float64)
+    for t in range(T):
+        a[t] = TaskVectorCalculator.calculate_squared_norm(
+            pretrained_model, 
+            models_to_merge[t]
+        )
+    a_sum = np.sum(a)
+
+    # (2) Build the T x T matrix M and the vector b
+    print(f"# (2) Build the T x T matrix M and the vector b...")
+    M = np.zeros((T, T), dtype=np.float64)
+    b = np.zeros(T, dtype=np.float64)
+
+    for t in range(T):
+        # Diagonal: M_{t,t} = a[t]
+        M[t, t] = a[t]
+        # b_t's first term: a[t]^2 / a_sum
+        b[t] = (a[t]**2) / a_sum
+
+    # Fill off-diagonal entries and accumulate the second term of b[t]
+    for t in range(T):
+        for k in range(T):
+            if k == t:
+                continue
+
+            # Calculate dot((θ_k - θ0), (θ_t - θ0)) via cos * sqrt(a[k]) * sqrt(a[t])
+            cos_kt = TaskVectorCalculator.calculate_cosine_similarity(
+                pretrained_model, 
+                models_to_merge[k], 
+                models_to_merge[t]
+            )
+            dot_kt = cos_kt * np.sqrt(a[k]) * np.sqrt(a[t])
+
+            M[t, k] = dot_kt
+
+            # b[t] += (1 / a_sum) * a[k] * dot_kt
+            b[t] += (a[k] * dot_kt) / a_sum
+    
+    # (3) Solve M * λ = b
+    #    (You may want to check for singularity or very small diagonal values in practice)
+    print(f"# (3) Solve M * λ = b")
+    lambdas = np.linalg.solve(M, b)
+    
+
+    return lambdas
+
+def profile_metagpt_strict(pretrained_model, models_to_merge):
+    """
+    metagpt_strict関数の実行時間とメモリ使用量をプロファイリングする関数
+    
+    Args:
+        pretrained_model: ベースとなる事前学習済みモデル
+        models_to_merge: マージ対象のモデルリスト
+    """
+    # GPUメモリの初期状態を記録
+    torch.cuda.empty_cache()
+    initial_memory = torch.cuda.memory_allocated()
+    
+    # プロファイラの設定
+    profiler = cProfile.Profile()
+    profiler.enable()
+    
+    # 実行時間の計測開始
+    start_time = time.time()
+    
+    # metagpt_strict関数の実行
+    try:
+        lambdas = metagpt_strict(pretrained_model, models_to_merge)
+    finally:
+        # プロファイリングの終了
+        profiler.disable()
+        end_time = time.time()
+        
+        # GPUメモリ使用量の計算
+        final_memory = torch.cuda.memory_allocated()
+        memory_used = final_memory - initial_memory
+        
+        # 結果の出力
+        print("\n=== メタGPT実行プロファイル ===")
+        print(f"実行時間: {end_time - start_time:.2f}秒")
+        print(f"GPUメモリ使用量: {memory_used / 1024**2:.2f} MB")
+        
+        # 詳細なプロファイリング結果の出力
+        stats = pstats.Stats(profiler)
+        stats.sort_stats(SortKey.TIME)
+        stats.print_stats(20)  # 上位20件の統計を表示
+        
+        return lambdas
+
+
+def analyze_task_vectors(
+    pretrained_model: PreTrainedModel,
+    models_to_merge: List[PreTrainedModel]
+) -> dict:
+    """
+    タスクベクトル間のグラム行列を計算し、その性質を分析する
+
+    Args:
+        pretrained_model: 基準となる事前学習済みモデル
+        models_to_merge: マージするモデルのリスト
+
+    Returns:
+        dict: 分析結果を含む辞書
+        {
+            "gram_matrix": グラム行列,
+            "has_inverse": 逆行列が存在するかどうか,
+            "condition_number": 条件数,
+            "determinant": 行列式
+        }
+    """
+    n_models = len(models_to_merge)
+    gram_matrix = np.zeros((n_models, n_models))
+    
+    # グラム行列の計算
+    for i in tqdm(range(n_models), desc="Computing Gram matrix"):
+        for j in range(i, n_models):
+            if i == j:
+                # 対角成分は二乗ノルム
+                squared_norm = TaskVectorCalculator.calculate_squared_norm(
+                    pretrained_model, models_to_merge[i]
+                )
+                gram_matrix[i, j] = squared_norm
+            else:
+                # 非対角成分は内積
+                dot_product = 0.0
+                for (param_0, param_i), (_, param_j) in zip(
+                    TaskVectorCalculator.parameter_iterator(pretrained_model, models_to_merge[i]),
+                    models_to_merge[j].named_parameters()
+                ):
+                    param_0_cpu = param_0.detach().cpu().to(torch.float32)
+                    param_i_cpu = param_i.detach().cpu().to(torch.float32)
+                    param_j_cpu = param_j.detach().cpu().to(torch.float32)
+                    
+                    diff_i = param_i_cpu - param_0_cpu
+                    diff_j = param_j_cpu - param_0_cpu
+                    
+                    dot_product += torch.sum(diff_i * diff_j).item()
+                    
+                    del param_0_cpu, param_i_cpu, param_j_cpu, diff_i, diff_j
+                    torch.cuda.empty_cache()
+                
+                gram_matrix[i, j] = dot_product
+                gram_matrix[j, i] = dot_product
+    
+    # 行列式の計算
+    det = np.linalg.det(gram_matrix)
+    
+    # 条件数の計算
+    condition_number = np.linalg.cond(gram_matrix)
+    
+    # 逆行列の存在判定
+    # 行列式がゼロに近い、または条件数が大きすぎる場合は逆行列が不安定
+    has_inverse = abs(det) > 1e-10 and condition_number < 1e15
+    
+    return {
+        "gram_matrix": gram_matrix,
+        "has_inverse": has_inverse,
+        "condition_number": condition_number,
+        "determinant": det
+    }
