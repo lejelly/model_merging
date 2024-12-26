@@ -68,6 +68,9 @@ def metagpt(pretrained_model: PreTrainedModel,
 
 class WeightingStrategy(Enum):
     METAGPT = "metagpt"
+    METAGPT_ALPHA = "metagpt_alpha"
+    METAGPT_BLACKBOX = "metagpt_blackbox"
+    METAGPT_OPTIMIZE = "metagpt_optimize"
     METAGPT_STRICT = "metagpt_strict"
     COSINE_SIMILARITY = "cosine_similarity"
     GRAPH_LAPLACIAN = "graph_laplacian"

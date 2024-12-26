@@ -1,7 +1,7 @@
 #!/bin/bash
-#PJM -L rscgrp=share-short
+#PJM -L rscgrp=share-debug
 #PJM -L gpu=1
-#PJM -L elapse=2:00:00
+#PJM -L elapse=0:30:00
 #PJM -j
 
 # module load
@@ -23,6 +23,8 @@ DATASET=$dataset
 #MODEL_NAME=GAIR/Abel-7B-002
 #MODEL_NAME=tokyotech-llm/Swallow-MS-7b-v0.1
 #MODEL_NAME=upaya07/Arithmo2-Mistral-7B
+#MODEL_NAME=TIGER-Lab/MAmmoTH2-7B
+#MODEL_NAME=Nondzu/Mistral-7B-codealpaca-lora
 
 MODEL_NAME=$model_name
 
@@ -44,13 +46,25 @@ python3 inference_llms_instruct_math_code.py \
     --tensor_parallel_size 1 \
     --weight_mask_rate 0.0 \
     --comp_file_path $COMP_FILE_PATH \
-    --log_resp_path $LOG_RESP_PATH 
+    --log_resp_path $LOG_RESP_PATH \
+    --prompt_type "zeroshotcot"
 
 
+#pjsub -g gb20 -x dataset="gsm8k",model_name="WizardLMTeam/WizardMath-7B-V1.1" scripts/withoutDARE.sh
 #pjsub -g gb20 -x dataset="gsm8k",model_name="augmxnt/shisa-gamma-7b-v1" scripts/withoutDARE.sh
+#pjsub -g gb20 -x dataset="gsm8k",model_name="TIGER-Lab/MAmmoTH2-7B" scripts/withoutDARE.sh
+#pjsub -g gb20 -x dataset="gsm8k",model_name="Nondzu/Mistral-7B-codealpaca-lora" scripts/withoutDARE.sh
 #pjsub -g gb20 -x dataset="human_eval",model_name="augmxnt/shisa-gamma-7b-v1" scripts/withoutDARE.sh
+
+#pjsub -g gb20 -x dataset="ja_mgsm",model_name="WizardLMTeam/WizardMath-7B-V1.1" scripts/withoutDARE.sh
 #pjsub -g gb20 -x dataset="ja_mgsm",model_name="TIGER-Lab/MAmmoTH2-7B" scripts/withoutDARE.sh
 #pjsub -g gb20 -x dataset="ja_mgsm",model_name="Nondzu/Mistral-7B-codealpaca-lora" scripts/withoutDARE.sh
+
+#pjsub -g gb20 -x dataset="mbpp",model_name="WizardLMTeam/WizardMath-7B-V1.1" scripts/withoutDARE.sh
+#pjsub -g gb20 -x dataset="mbpp",model_name="TIGER-Lab/MAmmoTH2-7B" scripts/withoutDARE.sh
+#pjsub -g gb20 -x dataset="mbpp",model_name="Nondzu/Mistral-7B-codealpaca-lora" scripts/withoutDARE.sh
+#pjsub -g gb20 -x dataset="mbpp",model_name="augmxnt/shisa-gamma-7b-v1" scripts/withoutDARE.sh
+
 
 << COMMENTOUT
 MODEL1=WizardMath-7B-V1.1

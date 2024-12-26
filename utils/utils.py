@@ -9,13 +9,14 @@ import transformers
 from transformers import Trainer, TrainerState
 from fasttext.FastText import _FastText
 import gc
+import json
 
 def aggressive_clear_gpu_memory():
     # 現在のメモリ状態を表示
-    print("Before cleanup:")
-    for i in range(torch.cuda.device_count()):
-        print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
-        print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
+    #print("Before cleanup:")
+    #for i in range(torch.cuda.device_count()):
+    #    print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
+    #    print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
     
     try:
         # 1. すべての変数を削除
@@ -62,12 +63,12 @@ def aggressive_clear_gpu_memory():
     except Exception as e:
         print(f"Error during memory cleanup: {e}")
     
-    finally:
+    #finally:
         # 最終的なメモリ状態を表示
-        print("\nAfter cleanup:")
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
-            print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
+        #print("\nAfter cleanup:")
+        #for i in range(torch.cuda.device_count()):
+        #    print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
+        #    print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
 
 # モデルを含むすべての変数を削除する関数
 def delete_all_models():
@@ -195,3 +196,16 @@ def copy_params_to_model(params: dict, model: nn.Module):
     for param_name, param_value in model.named_parameters():
         if param_name in params:
             param_value.data.copy_(params[param_name])
+
+def stream_jsonl(filename: str):
+    """JSONLファイルを1行ずつ読み込むジェネレータ関数"""
+    with open(filename, 'r') as f:
+        for line in f:
+            if line.strip():  # 空行をスキップ
+                yield json.loads(line)
+
+def write_jsonl(filename: str, data_list):
+    """データをJSONL形式でファイルに書き込む"""
+    with open(filename, 'w') as f:
+        for item in data_list:
+            f.write(json.dumps(item) + '\n')

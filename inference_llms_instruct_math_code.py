@@ -255,7 +255,7 @@ def test_alpaca_eval(llm, finetuned_model_name, args, logger: logging.Logger, st
     torch.cuda.empty_cache()
 
 @measure_execution_time("test_gsm8k")
-def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, prompt_type="fewshotcot", comp_file_path=None, model_name=None, drop_rate=None):
+def test_gsm8k(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, prompt_type="zeroshotcot", comp_file_path=None, model_name=None, drop_rate=None):
     gsm8k_ins = []
     gsm8k_answers = []
     problem_prompt = get_math_task_prompt(prompt_type)
@@ -481,8 +481,13 @@ def test_human_eval(llm, args, logger: logging.Logger, start_index=0, end_index=
 
 @measure_execution_time("test_mbpp")
 def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, end_index=sys.maxsize, save_model_path=None, save_gen_results_folder=None):
+    # バッチサイズを設定
+    BATCH_SIZE = 50
+
     problems = read_mbpp(test_data_path)
     task_ids = sorted(problems.keys())[start_index: end_index]
+    
+    # プロンプトの準備
     prompts = []
     for task_id in task_ids:
         prompt = f"\n{problems[task_id]['text']}\nTest examples:"
@@ -495,46 +500,42 @@ def test_mbpp(llm, test_data_path, args, logger: logging.Logger, start_index=0, 
                 prompt += f"\n{test_example}"
         prompts.append(prompt)
 
-    num_samples = len(prompts)
+    # バッチ処理用にプロンプトとタスクIDをグループ化
+    prompt_batches = [prompts[i:i + BATCH_SIZE] for i in range(0, len(prompts), BATCH_SIZE)]
+    task_id_batches = [task_ids[i:i + BATCH_SIZE] for i in range(0, len(task_ids), BATCH_SIZE)]
+
     sampling_params = SamplingParams(temperature=0.0, top_p=1, max_tokens=2048)
 
     shutil.rmtree(save_gen_results_folder, ignore_errors=True)
     os.makedirs(save_gen_results_folder, exist_ok=True)
 
-    for i in tqdm(range(num_samples), ncols=0, total=num_samples):
-        output_file = f"{save_gen_results_folder}/{args.start_index + i}.jsonl"
-
-        prompt = prompts[i].replace('    ', '\t')
-        prompt_batch = [generate_code_task_prompt(prompt)]
-
-        ids_batch = [task_ids[i]]
+    # バッチ単位で処理
+    for batch_idx, (prompt_batch, ids_batch) in enumerate(tqdm(zip(prompt_batches, task_id_batches), total=len(prompt_batches))):
+        batch_prompts = [p.replace('    ', '\t') for p in prompt_batch]
+        batch_prompts = [generate_code_task_prompt(p) for p in batch_prompts]
+        
         completion_seqs = []
+        
+        with torch.no_grad():
+            completions = llm.generate(batch_prompts, sampling_params)
+            
+        for task_id, completion in zip(ids_batch, completions):
+            gen_seq = completion.outputs[0].text
+            completion_seq = gen_seq.split("### Response:")[-1]
+            completion_seq = completion_seq.replace('\t', '    ')
+            all_code = gen_seq.replace('\t', '    ')
 
-        loops = 1
+            completion_seqs.append(
+                {'task_id': task_id,
+                 'completion': completion_seq,
+                 'all_code': all_code,
+                }
+            )
 
-        for _ in tqdm(range(loops), total=loops, leave=False, ncols=0):
-
-            with torch.no_grad():
-                completions = llm.generate(prompt_batch, sampling_params)
-            gen_seqs = [completions[0].outputs[0].text]
-
-            if gen_seqs is not None:
-                assert len(ids_batch) == 1
-                task_id = ids_batch[0]
-
-                for seq_idx, gen_seq in enumerate(gen_seqs):
-                    completion_seq = gen_seq.split("### Response:")[-1]
-                    completion_seq = completion_seq.replace('\t', '    ')
-                    all_code = gen_seq.replace('\t', '    ')
-
-                    completion_seqs.append(
-                        {'task_id': task_id,
-                         'completion': completion_seq,
-                         'all_code': all_code,
-                         }
-                    )
-
-        write_jsonl(output_file, completion_seqs)
+        # バッチごとにファイルに保存
+        for i, seq in enumerate(completion_seqs):
+            output_file = f"{save_gen_results_folder}/{args.start_index + batch_idx * BATCH_SIZE + i}.jsonl"
+            write_jsonl(output_file, [seq])
 
     files = sorted(glob.glob(f"{save_gen_results_folder}/*.jsonl"))
     logger.info(f"find {len(files)} files in {save_gen_results_folder}")

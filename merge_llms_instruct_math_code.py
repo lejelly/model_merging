@@ -23,6 +23,12 @@ from tqdm import tqdm
 from proposed_methods import metagpt, WeightingStrategy, metagpt_advanced, visualize_task_similarities, calculate_lambda_optimized, calculate_lambda_full, calc_MetaRiemann, metagpt_strict, profile_metagpt_strict, analyze_task_vectors
 from calculate_lambdas import calculate_and_save_lambdas
 
+import pandas as pd
+
+from optimize_lambdas import LambdaOptimizer
+from optimise_lambdas_spsa import LambdaOptimizerSPSA
+
+
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
     "jp2": "tokyotech-llm/Swallow-MS-7b-v0.1",
@@ -147,36 +153,79 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     """
     
     if args.metagpt:
-        
-        print("\nAnalyzing task vectors...")
-        analysis = analyze_task_vectors(pretrained_model, models_to_merge)
-        
-        print("\nGram Matrix Analysis:")
-        print("-" * 40)
-        print(f"Gram Matrix:\n{analysis['gram_matrix']}")
-        print(f"Has stable inverse: {analysis['has_inverse']}")
-        print(f"Condition number: {analysis['condition_number']:.2e}")
-        print(f"Determinant: {analysis['determinant']:.2e}")
-        print("-" * 40)
-        print()
-        """
         print("Start calculating lambdas...")
         print(f"Lambda_strategy: {args.lambda_strategy}")
         
         strategy = WeightingStrategy(args.lambda_strategy)
-        save_dir = f"./lambdas/{'_'.join(merge_task_names)}/{strategy.value}"
-        lambdas = calculate_and_save_lambdas(
-            pretrained_model=pretrained_model,
-            models_to_merge=models_to_merge,
-            finetuned_model_names=finetuned_model_names,
-            strategy=strategy,
-            save_dir=save_dir
-        )
-        print()
-        print_lambda_distribution(lambdas, finetuned_model_names)
-        print()
-        """
-    """        
+        params_name = f"{args.optimizer_type}_epochs{args.num_epochs}_lr{args.learning_rate}_sample{args.num_train_samples}"
+        save_dir = f"./lambdas/{'_'.join(merge_task_names)}/{strategy.value}/{params_name}" 
+        os.makedirs(save_dir, exist_ok=True)
+        
+        if args.lambda_strategy == "metagpt":
+            optimized_lambdas = metagpt(pretrained_model, models_to_merge)
+            print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+        elif args.lambda_strategy == "metagpt_strict":
+            optimized_lambdas = metagpt_strict(pretrained_model, models_to_merge)
+            print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+        else:
+            # ファイル名の生成
+            model_names_str = '_'.join(sorted([name.split('/')[-1] for name in finetuned_model_names]))
+            initial_lambda_filename = f'initial_lambdas_{strategy.value}_{model_names_str}.csv'
+            optimized_lambda_filename = f'optimized_lambdas_{strategy.value}_{model_names_str}.csv'
+            #initial_lambda_filepath = os.path.join(save_dir, initial_lambda_filename)
+            initial_lambda_filepath = args.initial_lambda_filepath
+            optimized_lambda_filepath = os.path.join(save_dir, optimized_lambda_filename)
+            #optimized_lambda_filepath = args.optimized_lambda_filepath
+            
+            # 既存のλ値をチェック
+            if os.path.exists(initial_lambda_filepath):
+                print(f"Loading existing lambdas from: {save_dir}")
+                # initial lambdasの読み込み
+                initial_df = pd.read_csv(initial_lambda_filepath)
+                initial_df = initial_df.set_index('model_name').loc[finetuned_model_names].reset_index()
+                initial_lambdas = initial_df['lambda'].values
+            else:    
+                # 新しくλ値を計算
+                initial_lambdas = metagpt(pretrained_model, models_to_merge)
+                # initial lambdasの保存
+                initial_df = pd.DataFrame({
+                    'model_name': finetuned_model_names,
+                    'lambda': initial_lambdas
+                })
+                initial_df.to_csv(initial_lambda_filepath, index=False)
+            
+            if os.path.exists(optimized_lambda_filepath):
+                # optimized lambdasの読み込み
+                optimized_df = pd.read_csv(optimized_lambda_filepath)
+                optimized_df = optimized_df.set_index('model_name').loc[finetuned_model_names].reset_index()
+                optimized_lambdas = optimized_df['lambda'].values
+            else:
+                optimizer = LambdaOptimizer(
+                    seed=args.seed,
+                    pretrained_model=pretrained_model,
+                    pretrained_model_name=args.pretrained_model_name,
+                    models_to_merge=models_to_merge,
+                    tokenizers=tokenizers,
+                    initial_lambdas=initial_lambdas,
+                    num_epochs=args.num_epochs,
+                    learning_rate=args.learning_rate,
+                    num_train_samples=args.num_train_samples,
+                    optimizer_type=args.optimizer_type,
+                    logger=logger,
+                    params_name=params_name,
+                    finetuned_model_names=finetuned_model_names,
+                    optimized_lambda_filepath=optimized_lambda_filepath
+                )
+                
+                optimized_lambdas = optimizer.optimize()
+        
+                print("\nInitial lambdas:")
+                print_lambda_distribution(initial_lambdas, finetuned_model_names)
+                print("\nOptimized lambdas:")
+                print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+                print()
+        
+        
     if args.single_exclusive_model:
         masked_param_dicts = mask_model_weights_exclusive(finetuned_models=models_to_merge, pretrained_model=merged_model, 
                                                         exclude_param_names_regex=[], weight_format=args.weight_format,
@@ -208,7 +257,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                     mask_apply_method=args.mask_apply_method,
                                                     models_use_deepcopy=False,
                                                     exclusive_dropout=args.exclusive_dropout,
-                                                    gradation_coefficients=lambdas)
+                                                    gradation_coefficients=optimized_lambdas)
 
     save_instruct_model_path = save_math_model_path = save_code_model_path = save_jp_model_path = None
     if args.merge_instruct:
@@ -250,7 +299,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                         comp_file_path=args.comp_file_path, model_name=args.save_model_name)
             except Exception as e:
                 logger.error(f"gsm8k評価エラー: {str(e)}")
-            ""
+            """
             try:
                 test_data_path = "math_code_data/MATH_test.jsonl"
                 test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
@@ -258,15 +307,16 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                     comp_file_path= args.comp_file_path, model_name=args.save_model_name)
             except Exception as e:
                 logger.error(f"MATH評価エラー: {str(e)}")
-            ""
+            """
 
-        elif args.dataset_name=="human_eval" and save_model_path==save_code_model_path:
+        elif args.dataset_name=="mbpp" and save_model_path==save_code_model_path:
             logger.info(f"evaluating merged model on code task...")
             delete_all_models()
             aggressive_clear_gpu_memory()
             llm = create_llm(finetuned_model_name=save_code_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
+            """"
             try:
                 save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/human_eval/{args.save_model_name}"
                 os.makedirs(save_gen_results_folder, exist_ok=True)
@@ -274,7 +324,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                 save_model_path=None, save_gen_results_folder=save_gen_results_folder)
             except Exception as e:
                 logger.error(f"human_eval評価エラー: {str(e)}")
-            ""
+            """
             try:
                 save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/mbpp/{args.save_model_name}"
                 os.makedirs(save_gen_results_folder, exist_ok=True)
@@ -284,7 +334,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                         save_model_path=None, save_gen_results_folder=save_gen_results_folder)
             except Exception as e:
                 logger.error(f"mbpp評価エラー: {str(e)}")
-            ""
+            
         
         elif args.dataset_name=="alpaca_eval" and save_model_path==save_instruct_model_path:
             logger.info(f"evaluating merged model on instruct task...")
@@ -325,20 +375,20 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     torch.cuda.empty_cache()    
     
 
-    ""
+    """
     if args.dataset_name == "ja_mgsm":
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                         start_index=args.start_index, end_index=args.end_index, 
                         comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
                         log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
-    ""
+    """
     
     for save_model_path in save_model_paths:
         if save_model_path is not None:
             shutil.rmtree(save_model_path, ignore_errors=True)
     logger.info(f"inference of merging method {args.merging_method_name} is completed")
-    """
+    
 
 parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_jp1", action="store_true", default=False, help="whether to merge instruct model")
@@ -389,6 +439,15 @@ parser.add_argument(
     default=WeightingStrategy.METAGPT.value,
     help='Lambdaの計算戦略を選択'
 )
+parser.add_argument("--num_epochs", type=int, default=10, help="Number of epochs for lambda optimization")
+parser.add_argument("--learning_rate", type=float, default=0.01, help="Learning rate for lambda optimization")
+parser.add_argument("--num_train_samples", type=int, default=10, help="Number of training samples for lambda optimization")
+parser.add_argument("--optimizer_type", type=str, default="spsa", choices=["adam", "sgd", "spsa"], help="Optimizer type for lambda optimization")
+parser.add_argument("--num_steps", type=int, default=5, help="Number of steps for lambda optimization")
+parser.add_argument("--initial_lambda_filepath", type=str, default=None, help="initial lambda filepath")
+parser.add_argument("--optimized_lambda_filepath", type=str, default=None, help="optimized lambda filepath")
+parser.add_argument("--run_name", type=str, default=None, help="run name")
+
 
 try:
     args = parser.parse_args()
@@ -419,7 +478,8 @@ if __name__ == "__main__":
     if args.merging_method_name == "average_merging":
         args.save_model_name = f"{args.merging_method_name}"
     elif args.merging_method_name == "task_arithmetic" or args.merging_method_name == "ties_merging":
-        args.save_model_name = f"{args.merging_method_name}_gr1_{args.gradation1}_gr2_{args.gradation2}_gr3_{args.gradation3}"
+        #args.save_model_name = f"{args.merging_method_name}_gr1_{args.gradation1}_gr2_{args.gradation2}_gr3_{args.gradation3}"
+        args.save_model_name = f"{args.run_name}"
     else:
         assert args.merging_method_name == "mask_merging"
         if args.mask_apply_method == "average_merging":

@@ -223,5 +223,5 @@ class NewTaskVector:
                 # 元の辞書から削除
                 del self.task_vector_param_dict[param_name]
                 torch.cuda.empty_cache()  # 必要であればGPUメモリをクリア
-        return pretrained_param_dict  # 直接更新された辞書を返す
+            return pretrained_param_dict  # 直接更新された辞書を返す
     
