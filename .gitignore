@@ -154,3 +154,5 @@ alpaca_eval
 tmp*
 *.csv
 lambdas
+bigcode-evaluation-harness
+env_mbpp

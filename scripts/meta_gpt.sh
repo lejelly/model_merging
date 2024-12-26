@@ -1,8 +1,8 @@
 #!/bin/bash
 #PJM -L rscgrp=share-short
-#PJM --name gram_matrix_4_models
+#PJM --name metagpt_optimize
 #PJM -L gpu=2
-#PJM -L elapse=1:00:00
+#PJM -L elapse=2:00:00
 #PJM -j
 
 # module load
@@ -17,8 +17,8 @@ SEED=(0)
 MERGE_METHOD=task_arithmetic
 #MERGE_METHOD=average_merging
 
-COMP_FILE_PATH=./results_metagpt/math_code_jp/Metagpt_strict/${DATASETNAME}.txt
-LOG_RESP_PATH=./results_metagpt/math_code_jp/Metagpt_strict/${DATASETNAME}/json_logs/Metagpt_strict.json
+COMP_FILE_PATH=./results_metagpt/math_code_jp/metagpt_optimize/${DATASETNAME}.txt
+LOG_RESP_PATH=./results_metagpt/math_code_jp/metagpt_optimize/${DATASETNAME}/json_logs/Metagpt_blackbox.json
 
 # environment setup
 cd $PATH_TO_WORKING_DIR
@@ -31,9 +31,13 @@ STRATEGY=$strategy
 #STRATEGY="hierarchical_clustering"
 #STRATEGY="attention_based"
 
+INITIAL_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/math_code_jp/metagpt_optimize/initial_lambdas_metagpt_alpha_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
+#OPTIMIZED_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/math_code_jp/metagpt_blackbox/spsa_steps3_lr0.001_sample10/optimized_lambdas_metagpt_blackbox_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
+#RUN_NAME="spsa_steps3_lr0.001_sample10"
+
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
-    --merge_math1 --merge_math2 --merge_code --merge_jp \
+    --merge_math --merge_code --merge_jp \
     --merging_method_name $MERGE_METHOD \
     --scaling_coefficient 1.0 \
     --tensor_parallel_size 1 \
@@ -42,13 +46,36 @@ python3 merge_llms_instruct_math_code.py \
     --log_resp_path $LOG_RESP_PATH \
     --dataset_name $DATASETNAME \
     --metagpt \
-    --lambda_strategy $STRATEGY
+    --lambda_strategy $STRATEGY \
+    --initial_lambda_filepath $INITIAL_LAMBDA_FILEPATH \
+    --num_epochs 5 \
+    --learning_rate 0.001 \
+    --num_train_samples 100 \
+    --optimizer_type adam 
+#    --run_name $RUN_NAME \
+#    --optimized_lambda_filepath $OPTIMIZED_LAMBDA_FILEPATH 
+
 
 
 #pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="human_eval",strategy="metagpt" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="mbpp",strategy="metagpt" scripts/meta_gpt.sh
 
 #pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt_strict" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="human_eval",strategy="metagpt_strict" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt_strict" scripts/meta_gpt.sh
+
+
+#pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt_alpha" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="mbpp",strategy="metagpt_alpha" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt_alpha" scripts/meta_gpt.sh
+
+
+#pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt_blackbox" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="mbpp",strategy="metagpt_blackbox" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt_blackbox" scripts/meta_gpt.sh
+
+#pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt_optimize" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="mbpp",strategy="metagpt_optimize" scripts/meta_gpt.sh
+#pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt_optimize" scripts/meta_gpt.sh
