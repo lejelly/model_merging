@@ -13,10 +13,10 @@ import json
 
 def aggressive_clear_gpu_memory():
     # 現在のメモリ状態を表示
-    #print("Before cleanup:")
-    #for i in range(torch.cuda.device_count()):
-    #    print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
-    #    print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
+    print("Before cleanup:")
+    for i in range(torch.cuda.device_count()):
+        print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
+        print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
     
     try:
         # 1. すべての変数を削除
@@ -63,12 +63,12 @@ def aggressive_clear_gpu_memory():
     except Exception as e:
         print(f"Error during memory cleanup: {e}")
     
-    #finally:
+    finally:
         # 最終的なメモリ状態を表示
-        #print("\nAfter cleanup:")
-        #for i in range(torch.cuda.device_count()):
-        #    print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
-        #    print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
+        print("\nAfter cleanup:")
+        for i in range(torch.cuda.device_count()):
+            print(f"GPU {i} memory allocated: {torch.cuda.memory_allocated(i) / 1024**2:.2f} MB")
+            print(f"GPU {i} memory cached: {torch.cuda.memory_cached(i) / 1024**2:.2f} MB")
 
 # モデルを含むすべての変数を削除する関数
 def delete_all_models():

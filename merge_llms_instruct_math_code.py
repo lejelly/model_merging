@@ -154,12 +154,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     
     if args.metagpt:
         print("Start calculating lambdas...")
-        print(f"Lambda_strategy: {args.lambda_strategy}")
-        
-        strategy = WeightingStrategy(args.lambda_strategy)
-        params_name = f"{args.optimizer_type}_epochs{args.num_epochs}_lr{args.learning_rate}_sample{args.num_train_samples}"
-        save_dir = f"./lambdas/{'_'.join(merge_task_names)}/{strategy.value}/{params_name}" 
-        os.makedirs(save_dir, exist_ok=True)
+        print(f"Lambda_strategy: {args.lambda_strategy}")        
         
         if args.lambda_strategy == "metagpt":
             optimized_lambdas = metagpt(pretrained_model, models_to_merge)
@@ -169,13 +164,23 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
             print_lambda_distribution(optimized_lambdas, finetuned_model_names)
         else:
             # ファイル名の生成
+            strategy = WeightingStrategy(args.lambda_strategy)
+            params_name = f"{args.optimizer_type}_epochs{args.num_epochs}_lr{args.learning_rate}_sample{args.num_train_samples}"
+            save_dir = f"./lambdas/{'_'.join(merge_task_names)}/{strategy.value}/{params_name}" 
+            os.makedirs(save_dir, exist_ok=True)
             model_names_str = '_'.join(sorted([name.split('/')[-1] for name in finetuned_model_names]))
             initial_lambda_filename = f'initial_lambdas_{strategy.value}_{model_names_str}.csv'
             optimized_lambda_filename = f'optimized_lambdas_{strategy.value}_{model_names_str}.csv'
-            #initial_lambda_filepath = os.path.join(save_dir, initial_lambda_filename)
-            initial_lambda_filepath = args.initial_lambda_filepath
-            optimized_lambda_filepath = os.path.join(save_dir, optimized_lambda_filename)
-            #optimized_lambda_filepath = args.optimized_lambda_filepath
+   
+            if args.initial_lambda_filepath is not None:
+                initial_lambda_filepath = args.initial_lambda_filepath
+            else:
+                initial_lambda_filepath = os.path.join(save_dir, initial_lambda_filename)
+            
+            if args.optimized_lambda_filepath is not None:
+                optimized_lambda_filepath = args.optimized_lambda_filepath
+            else:
+                optimized_lambda_filepath = os.path.join(save_dir, optimized_lambda_filename)
             
             # 既存のλ値をチェック
             if os.path.exists(initial_lambda_filepath):
@@ -186,7 +191,19 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                 initial_lambdas = initial_df['lambda'].values
             else:    
                 # 新しくλ値を計算
-                initial_lambdas = metagpt(pretrained_model, models_to_merge)
+                if args.lambda_strategy == "metagpt_random_initial_lambda":
+                    # ランダムな値を生成し、合計が1になるように正規化
+                    random_values = np.random.rand(len(models_to_merge))
+                    initial_lambdas = random_values / np.sum(random_values)
+                elif args.lambda_strategy == "metagpt_average_lambda":
+                    # モデル数で均等に分割
+                    initial_lambdas = np.array([1.0 / len(models_to_merge)] * len(models_to_merge))
+                elif args.lambda_strategy == "metagpt_simple":
+                    # すべての要素を1.0に設定
+                    initial_lambdas = np.array([1.0] * len(models_to_merge))
+                else:
+                    initial_lambdas = metagpt(pretrained_model, models_to_merge)
+                    
                 # initial lambdasの保存
                 initial_df = pd.DataFrame({
                     'model_name': finetuned_model_names,
@@ -198,7 +215,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                 # optimized lambdasの読み込み
                 optimized_df = pd.read_csv(optimized_lambda_filepath)
                 optimized_df = optimized_df.set_index('model_name').loc[finetuned_model_names].reset_index()
-                optimized_lambdas = optimized_df['lambda'].values
+                optimized_lambdas = optimized_df['lambdas'].values
             else:
                 optimizer = LambdaOptimizer(
                     seed=args.seed,
@@ -219,11 +236,11 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                 
                 optimized_lambdas = optimizer.optimize()
         
-                print("\nInitial lambdas:")
-                print_lambda_distribution(initial_lambdas, finetuned_model_names)
-                print("\nOptimized lambdas:")
-                print_lambda_distribution(optimized_lambdas, finetuned_model_names)
-                print()
+            #print("\nInitial lambdas:")
+            #print_lambda_distribution(initial_lambdas, finetuned_model_names)
+        print("\nOptimized lambdas:")
+        print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+        print()
         
         
     if args.single_exclusive_model:
