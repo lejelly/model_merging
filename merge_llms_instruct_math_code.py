@@ -28,7 +28,6 @@ import pandas as pd
 from optimize_lambdas import LambdaOptimizer
 from optimise_lambdas_spsa import LambdaOptimizerSPSA
 
-
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
     "jp2": "tokyotech-llm/Swallow-MS-7b-v0.1",
@@ -60,25 +59,19 @@ finetuned_model_backbone_mapping_dict = {
     "Nondzu/Mistral-7B-codealpaca-lora": "mistralai/Mistral-7B-v0.1", 
 }
 
-def print_lambda_distribution(lambdas: np.ndarray, model_names: List[str] = None):
-    """
-    Print the distribution of lambda values for analysis.
-    
-    Args:
-        lambdas (np.ndarray): Calculated lambda values
-        model_names (List[str], optional): Names of the models for reference
-    """
-    print("\nLambda Distribution:")
-    print("-" * 40)
-    
-    for i, lambda_val in enumerate(lambdas):
-        model_name = f"Model {i+1}" if model_names is None else model_names[i]
-        print(f"{model_name}: {lambda_val:.10f} ({lambda_val*100:.1f}%)")
-    
-    print("-" * 40)
-    print(f"Sum of lambdas: {np.sum(lambdas):.6f}")
-    print(f"Max lambda: {np.max(lambdas):.4f}")
-    print(f"Min lambda: {np.min(lambdas):.4f}")
+def print_lambda_distribution(lambdas, model_names):
+    # もしlambdasがPyTorch tensorなら、NumPy配列に変換
+    if torch.is_tensor(lambdas):
+        lambdas_sum = torch.sum(lambdas).item()
+        lambdas_np = lambdas.detach().cpu().numpy()
+    else:
+        lambdas_sum = np.sum(lambdas)
+        lambdas_np = lambdas
+
+    print("\nLambda distribution:")
+    for i, (name, lambda_val) in enumerate(zip(model_names, lambdas_np)):
+        print(f"{name}: {lambda_val:.6f}")
+    print(f"Sum of lambdas: {lambdas_sum:.6f}")
 
 
 def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list, merge_task_names: list, models_to_merge: list, trainers: list, logger: logging.Logger,
@@ -99,7 +92,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     logger.info(f"configuration is {args}")
 
     try:
-        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.float16)
+        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
     except:
         if "meta-llama/Llama-2-7b" in args.pretrained_model_name:
@@ -107,7 +100,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
             pretrained_model = LlamaForCausalLM.from_pretrained("/work/gb20/b20042/model_merging/llama2")
             pretrained_tokenizer = LlamaTokenizer.from_pretrained("/work/gb20/b20042/model_merging/llama2")
         else:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
     
     
@@ -276,6 +269,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                     exclusive_dropout=args.exclusive_dropout,
                                                     gradation_coefficients=optimized_lambdas)
 
+    """
     save_instruct_model_path = save_math_model_path = save_code_model_path = save_jp_model_path = None
     if args.merge_instruct:
         save_instruct_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/instruct/{args.dataset_name}/{args.save_model_name}"
@@ -316,7 +310,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                         comp_file_path=args.comp_file_path, model_name=args.save_model_name)
             except Exception as e:
                 logger.error(f"gsm8k評価エラー: {str(e)}")
-            """
+            ""
             try:
                 test_data_path = "math_code_data/MATH_test.jsonl"
                 test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
@@ -324,7 +318,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                     comp_file_path= args.comp_file_path, model_name=args.save_model_name)
             except Exception as e:
                 logger.error(f"MATH評価エラー: {str(e)}")
-            """
+            ""
 
         elif args.dataset_name=="mbpp" and save_model_path==save_code_model_path:
             logger.info(f"evaluating merged model on code task...")
@@ -333,7 +327,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
             llm = create_llm(finetuned_model_name=save_code_model_path, pretrained_model_name=args.pretrained_model_name,
                             args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
                             just_inference=True, save_model_path=None)
-            """"
+            ""
             try:
                 save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/human_eval/{args.save_model_name}"
                 os.makedirs(save_gen_results_folder, exist_ok=True)
@@ -341,7 +335,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                 save_model_path=None, save_gen_results_folder=save_gen_results_folder)
             except Exception as e:
                 logger.error(f"human_eval評価エラー: {str(e)}")
-            """
+            ""
             try:
                 save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/mbpp/{args.save_model_name}"
                 os.makedirs(save_gen_results_folder, exist_ok=True)
@@ -392,20 +386,20 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     torch.cuda.empty_cache()    
     
 
-    """
+    ""
     if args.dataset_name == "ja_mgsm":
         args.test_data_path = "juletxara/mgsm"
         test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
                         start_index=args.start_index, end_index=args.end_index, 
                         comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
                         log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
-    """
+    ""
     
     for save_model_path in save_model_paths:
         if save_model_path is not None:
             shutil.rmtree(save_model_path, ignore_errors=True)
     logger.info(f"inference of merging method {args.merging_method_name} is completed")
-    
+    """
 
 parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_jp1", action="store_true", default=False, help="whether to merge instruct model")

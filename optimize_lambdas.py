@@ -2,7 +2,7 @@ import torch
 import json
 import logging
 import datasets
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
 from transformers import PreTrainedModel
 from vllm import LLM, SamplingParams
@@ -27,6 +27,7 @@ import copy
 import wandb
 from transformers import AutoModelForCausalLM
 import pandas as pd
+from utils.load_config import cache_dir
 
 class LambdaOptimizer:
     def __init__(
@@ -155,7 +156,6 @@ class LambdaOptimizer:
         merged_params = {}
         for name, param in self.pretrained_model.named_parameters():
             if name in self.task_vectors[0].task_vector_param_dict:
-                # cloneを使用せず、直接計算
                 merged_param = param
                 for tv, lambda_val in zip(self.task_vectors, self.lambdas):
                     merged_param = merged_param + lambda_val * tv.task_vector_param_dict[name]
@@ -203,7 +203,9 @@ class LambdaOptimizer:
             raise ValueError(f"Unknown task: {task}")
 
     def _evaluate_gsm8k(self, model: PreTrainedModel) -> torch.Tensor:
-        """GSM8Kでの評価（バッチ処理版）"""
+        """GSM8Kでの評価（真のバッチ処理版）"""
+        batch_size = 20
+        
         # プロンプトの準備
         gsm8k_ins = []
         gsm8k_answers = []
@@ -216,60 +218,41 @@ class LambdaOptimizer:
             temp_ans = int(temp_ans.replace(',', ''))
             gsm8k_answers.append(temp_ans)
 
-        # モッチサイズの設定
-        batch_size = 10  # GPUメモリに応じて調整
-        
-        # バッチ処理用の準備
+        # バッチ処理
         all_results = []
         for i in range(0, len(gsm8k_ins), batch_size):
             batch_prompts = gsm8k_ins[i:i + batch_size]
             batch_answers = gsm8k_answers[i:i + batch_size]
             
-            # バッチ内の各プロンプトに対して生成
-            for prompt, answer in zip(batch_prompts, batch_answers):
-                # generate_with_gradientsを使用して生成
-                generated_text, outputs = generate_with_gradients(
-                    model=model,
-                    tokenizer=self.tokenizers[0],
-                    prompt=prompt,
-                    max_length=1024,
-                    temperature=0.0,
-                    top_p=1.0
+            # バッチ生成を実行
+            generated_texts, outputs = generate_with_gradients_batch(
+                model=model,
+                tokenizer=self.tokenizers[0],
+                prompts=batch_prompts,
+                max_length=1024,
+                temperature=0.0,
+                top_p=1.0
+            )
+            
+            # バッチ内の結果を処理
+            for text, answer in zip(generated_texts, batch_answers):
+                pred = extract_answer_number(text)
+                correct = torch.tensor(
+                    float(float(pred) == float(answer)) if pred is not None else 0.0,
+                    dtype=torch.float32,
+                    device=model.device,
+                    requires_grad=True
                 )
-                
-                # 生成結果から答えを抽出
-                pred = extract_answer_number(generated_text)
-                
-                # 正誤判定（勾配計算可能な形式で）
-                if pred is not None:
-                    correct = torch.tensor(
-                        float(float(pred) == float(answer)),
-                        dtype=torch.float32,
-                        device=model.device,
-                        requires_grad=True
-                    )
-                else:
-                    correct = torch.tensor(
-                        0.0,
-                        dtype=torch.float32,
-                        device=model.device,
-                        requires_grad=True
-                    )
-                
                 all_results.append(correct)
-                
-                # バッチ処理後のメモリクリーンアップ
-                torch.cuda.empty_cache()
+            
+            torch.cuda.empty_cache()
         
-        # 全結果の平均を計算（勾配計算を維持）
         results_tensor = torch.stack(all_results)
-        accuracy = results_tensor.mean()
-        
-        return accuracy
+        return results_tensor.mean()
 
     def _evaluate_mbpp(self, model: PreTrainedModel) -> torch.Tensor:
-        """MBPPでの評価（バッチ処理版）"""
-        batch_size = 10  # GPUメモリに応じて調整
+        """MBPPでの評価（真のバッチ処理版）"""
+        batch_size = 20
         
         # プロンプトの準備
         prompts = []
@@ -285,78 +268,30 @@ class LambdaOptimizer:
             batch_prompts = prompts[i:i + batch_size]
             batch_task_ids = task_ids[i:i + batch_size]
             
-            # generate_with_gradientsを使用して生成
-            for prompt in batch_prompts:
-                generated_text, outputs = generate_with_gradients(
-                    model=model,
-                    tokenizer=self.tokenizers[1],
-                    prompt=prompt,
-                    max_length=2048,
-                    temperature=0.0,
-                    top_p=1.0
-                )
-                
-                # 生成結果の処理
-                completion_seq = generated_text.split("### Response:")[-1]
+            # バッチ生成を実行
+            generated_texts, outputs = generate_with_gradients_batch(
+                model=model,
+                tokenizer=self.tokenizers[1],
+                prompts=batch_prompts,
+                max_length=2048,
+                temperature=0.0,
+                top_p=1.0
+            )
+            
+            # 生成結果の処理
+            for text, task_id in zip(generated_texts, batch_task_ids):
+                completion_seq = text.split("### Response:")[-1]
                 completion_seq = completion_seq.replace('\t', '    ')
-                all_code = generated_text.replace('\t', '    ')
                 
-                completion = completion_seq.strip()
-                if '```python' in completion:
-                    def_line = completion.index('```python')
-                    completion = completion[def_line:].strip()
-                    completion = completion.replace('```python', '')
-                    try:
-                        next_line = completion.index('```')
-                        completion = completion[:next_line].strip()
-                    except:
-                        self.logger.info("wrong completion")
-                
-                if "__name__ == \"__main__\"" in completion:
-                    try:
-                        next_line = completion.index('if __name__ == "__main__":')
-                        completion = completion[:next_line].strip()
-                    except:
-                        self.logger.info("wrong completion")
-                
-                if "# Example usage" in completion:
-                    next_line = completion.index('# Example usage')
-                    completion = completion[:next_line].strip()
-                
-                if "# Test examples" in completion:
-                    next_line = completion.index('# Test examples')
-                    completion = completion[:next_line].strip()
-                
-                if "The solution is:" in completion:
-                    def_line = completion.index("The solution is:")
-                    completion = completion[def_line:].strip()
-                    completion = completion.replace('The solution is:', '')
-                    try:
-                        next_line = completion.index('\n\nThe answer is:')
-                        completion = completion[:next_line].strip()
-                    except:
-                        completion = completion.strip()
-                        self.logger.info("maybe wrong completion")
-                
-                if "The answer is:" in completion:
-                    def_line = completion.index("The answer is:")
-                    completion = completion[def_line:].strip()
-                    completion = completion.replace('The answer is:', '')
-                    try:
-                        next_line = completion.index('\n\nThe answer is:')
-                        completion = completion[:next_line].strip()
-                    except:
-                        completion = completion.strip()
-                        self.logger.info("maybe wrong completion")
+                completion = self._process_mbpp_completion(completion_seq)
                 
                 completion_seqs.append({
-                    'task_id': task_ids[i],
+                    'task_id': task_id,
                     'completion': completion,
-                    'all_code': all_code
+                    'all_code': text
                 })
-                
-                # バッチ処理後のメモリクリーンアップ
-                torch.cuda.empty_cache()
+            
+            torch.cuda.empty_cache()
         
         # 評価用の一時ディレクトリとファイルの設定
         temp_model_path = f"./save_merge_models/temp_merged_model/code/{self.params_name}"
@@ -419,57 +354,67 @@ class LambdaOptimizer:
         return accuracy_tensor
 
     def _evaluate_ja_mgsm(self, model: PreTrainedModel) -> torch.Tensor:
-        """ja-mgsmでの評価（勾配計算対応版）"""
+        """ja-mgsmでの評価（シンプル版）"""
         # 言語検出器の初期化
         lang_detect = LanguageDetector()
         
-        # プロンプトの準備
+        # データの確認
+        if not self.ja_mgsm_data or len(self.ja_mgsm_data) == 0:
+            self.logger.error("No ja-mgsm data available for evaluation")
+            return torch.tensor(0.0, dtype=torch.float32, device=model.device, requires_grad=True)
+        
+        # プロンプトと回答の準備
         questions = []
         prompts = []
         answers = []
-        for item in self.ja_mgsm_data:
-            questions.append(item["question"])
-            prompts.append(get_ja_math_task_prompt(input_text=item["question"]))
-            answers.append(item["answer_number"])
-        
-        # モデルを勾配計算可能な状態で準備
-        model.train()
-        
-        # 推論の実行
         resps = []
         preds = []
         
-        for prompt in prompts:
-            # 勾配を保持したまま生成
-            generated_text, outputs = generate_with_gradients(
-                model=model,
-                tokenizer=self.tokenizers[2],
-                prompt=prompt,
-                max_length=1024,
-                temperature=0.0,
-                top_p=1.0
-            )
+        try:
+            # 各サンプルを個別に処理
+            for item in self.ja_mgsm_data:
+                questions.append(item["question"])
+                prompt = get_ja_math_task_prompt(input_text=item["question"])
+                answers.append(item["answer_number"])
+                
+                # 個別に生成を実行
+                generated_text, _ = generate_with_gradients(
+                    model=model,
+                    tokenizer=self.tokenizers[2],
+                    prompt=prompt,
+                    max_length=1024,
+                    temperature=0.0,
+                    top_p=1.0
+                )
+                
+                resps.append(generated_text)
+                preds.append(extract_answer_number_for_ja_mgsm(generated_text))
+                
+                # 各生成後にGPUメモリをクリア
+                torch.cuda.empty_cache()
             
-            # 生成結果を保存
-            resps.append(generated_text)
-            preds.append(extract_answer_number_for_ja_mgsm(generated_text))
+            # 結果の処理
+            results = {
+                "question": questions,
+                "answer": answers,
+                "response": resps,
+                "prediction": preds,
+            }
+            
+            res_dict, incorrect, incorrects_ja, all_response = compute_score_for_ja_mgsm(results, lang_detect)
+            accuracy = res_dict.get("acc_ja", 0.0)
+            
+        except Exception as e:
+            self.logger.error(f"Error in ja-mgsm evaluation: {str(e)}")
+            accuracy = 0.0
         
-        # 結果の処理（元の処理を維持）
-        results = {
-            "question": questions,
-            "answer": answers,
-            "response": resps,
-            "prediction": preds,
-        }
-        
-        res_dict, incorrect, incorrects_ja, all_response = compute_score_for_ja_mgsm(results, lang_detect)
-        accuracy = res_dict["acc_ja"]
-        
-        # 精度をテンソルに変換（勾配計算用）- in-place操作を避ける
-        accuracy_tensor = torch.tensor(accuracy, 
-                                     dtype=torch.float32, 
-                                     device=model.device, 
-                                     requires_grad=True)
+        # 精度をテンソルに変換（勾配計算用）
+        accuracy_tensor = torch.tensor(
+            accuracy, 
+            dtype=torch.float32, 
+            device=model.device, 
+            requires_grad=True
+        )
         
         # GPUメモリのクリーンアップ
         torch.cuda.empty_cache()
@@ -478,92 +423,122 @@ class LambdaOptimizer:
 
     def optimize(self) -> np.ndarray:
         """λ値を最適化（計算グラフを維持）"""
-        best_lambdas = None
-        best_loss = float('inf')
-        
-        # モデルを評価モードに設定
-        self.pretrained_model.eval()
-        
-        lambda_str = "[" + ", ".join([f"{l:.3f}" for l in self.lambdas]) + "]"
-        self.logger.info(
-            f"Epoch 0 | "
-            f"Initial Lambdas: {lambda_str}"
-        )
-        
-        for epoch in range(self.num_epochs):
-            # 最適化ステップの開始
-            self.optimizer.zero_grad()
+        try:
+            best_lambdas = None
+            best_loss = float('inf')
             
-            # create_merged_modelを使用してマージされたパラメータを取得
-            merged_params = self.create_merged_model()
+            # モデルを評価モードに設定
+            self.pretrained_model.eval()
             
-            # compute_model_scoreを使用してスコアを計算
-            scores = self.compute_model_score(merged_params)
+            lambda_str = "[" + ", ".join([f"{l}" for l in self.lambdas]) + "]"
+            self.logger.info(
+                f"Epoch 0 | "
+                f"Initial Lambdas: {lambda_str}"
+            )
             
-            # 調和平均の計算（計算グラフを維持）
-            n = torch.tensor(len(scores), dtype=torch.float32, device=scores.device, requires_grad=True)
-            eps = 1e-8
-            denominator = torch.sum(1.0 / (scores + eps))
-            harmonic_mean = n / denominator
-            
-            # 損失の計算
-            task_loss = 1.0 - harmonic_mean
-            lambda_regularization = 0.01 * torch.sum(self.lambdas ** 2)
-            loss = task_loss + lambda_regularization
-            
-            # 勾配の計算と更新
-            loss.backward()
-            self.optimizer.step()
-            
-            # 現在の状態のロギング
-            with torch.no_grad():
-                lambda_str = "[" + ", ".join([f"{l:.3f}" for l in self.lambdas]) + "]"
-                self.logger.info(
-                    f"Epoch {epoch+1:^6d} | Loss: {loss.item():8.4f} | "
-                    f"GSM8K: {scores[0].item():8.4f} | MBPP: {scores[1].item():8.4f} | "
-                    f"JA-MGSM: {scores[2].item():8.4f} | Lambdas: {lambda_str}"
-                )
+            for epoch in range(self.num_epochs):
+                epoch_start_time = time.time()
                 
-                # wandbへのログ記録
-                self.wandb_run.log({
-                    "epoch": epoch,
-                    "loss": loss.item(),
-                    "gsm8k_score": scores[0].item(),
-                    "mbpp_score": scores[1].item(),
-                    "ja_mgsm_score": scores[2].item(),
-                    "harmonic_mean": harmonic_mean.item(),
-                    **{f"lambda_{i}": l.item() for i, l in enumerate(self.lambdas)}
-                })
-            
-            # ベストモデルの保存
-            if loss.item() < best_loss:
-                best_loss = loss.item()
-                best_lambdas = self.lambdas.clone()
-                self.logger.info(f"New best loss: {best_loss:.4f} with lambdas: {lambda_str}")
+                # 最適化ステップ
+                self.optimizer.zero_grad()
+                merged_params = self.create_merged_model()
+                scores = self.compute_model_score(merged_params)
                 
-                # optimized lambdasの保存（追記モード）
-                optimized_df = pd.DataFrame({
-                    'epoch': [epoch + 1],
-                    'model_name': [self.finetuned_model_names],
-                    'lambdas': [best_lambdas.detach().cpu().numpy().tolist()],
-                    'loss': [best_loss],
-                    'gsm8k_score': [scores[0].item()],
-                    'mbpp_score': [scores[1].item()],
-                    'ja_mgsm_score': [scores[2].item()]
-                })
+                # 調和平均の計算（計算グラフを維持）
+                n = torch.tensor(len(scores), dtype=torch.float32, device=scores.device, requires_grad=True)
+                eps = 1e-8
+                denominator = torch.sum(1.0 / (scores + eps))
+                harmonic_mean = n / denominator
                 
-                # ファイルが存在する場合は追記、存在しない場合は新規作成
-                if os.path.exists(self.optimized_lambda_filepath):
-                    optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
-                else:
-                    optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
-            
-            # メモリの解放
-            del scores, loss, harmonic_mean, merged_params
-            torch.cuda.empty_cache()
-        
+                # 損失の計算
+                task_loss = 1.0 - harmonic_mean
+                lambda_regularization = 0.01 * torch.sum(self.lambdas ** 2)
+                loss = task_loss + lambda_regularization
+                
+                # 勾配の計算と更新
+                loss.backward()
+                self.optimizer.step()
+                
+                # 現在の状態のロギング
+                with torch.no_grad():
+                    lambda_str = "[" + ", ".join([f"{l}" for l in self.lambdas]) + "]"
+                    self.logger.info(
+                        f"Epoch {epoch+1} | Loss: {loss.item()} | "
+                        f"GSM8K: {scores[0].item()} | MBPP: {scores[1].item()} | "
+                        f"JA-MGSM: {scores[2].item()} | Lambdas: {lambda_str}"
+                    )
+                    
+                    # wandbへのログ記録
+                    self.wandb_run.log({
+                        "epoch": epoch,
+                        "loss": loss.item(),
+                        "gsm8k_score": scores[0].item(),
+                        "mbpp_score": scores[1].item(),
+                        "ja_mgsm_score": scores[2].item(),
+                        "harmonic_mean": harmonic_mean.item(),
+                        **{f"lambda_{i}": l.item() for i, l in enumerate(self.lambdas)}
+                    })
+                
+                # ベストモデルの保存
+                if loss.item() < best_loss:
+                    best_loss = loss.item()
+                    best_lambdas = self.lambdas.clone()
+                    self.logger.info(f"New best loss: {best_loss:.4f} with lambdas: {lambda_str}")
+                    
+                    # optimized lambdasの保存（追記モード）
+                    optimized_df = pd.DataFrame({
+                        'epoch': [epoch + 1],
+                        'model_name': [self.finetuned_model_names],
+                        'lambdas': [best_lambdas.detach().cpu().numpy().tolist()],
+                        'loss': [best_loss],
+                        'gsm8k_score': [scores[0].item()],
+                        'mbpp_score': [scores[1].item()],
+                        'ja_mgsm_score': [scores[2].item()]
+                    })
+                    
+                    # ファイルが存在する場合は追記、存在しない場合は新規作成
+                    if os.path.exists(self.optimized_lambda_filepath):
+                        optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
+                    else:
+                        optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
+                
+                # メモリの解放
+                del scores, loss, harmonic_mean, merged_params
+                torch.cuda.empty_cache()
+                
+                epoch_end_time = time.time()
+                self.logger.info(f"Epoch {epoch+1} took {epoch_end_time - epoch_start_time:.2f} seconds")
+
+        finally:
+            pass
+
         self.wandb_run.finish()
         return best_lambdas
+
+    def _process_mbpp_completion(self, completion: str) -> str:
+        """MBPPの生成結果を処理する補助関数"""
+        if '```python' in completion:
+            completion = completion[completion.index('```python'):].strip()
+            completion = completion.replace('```python', '')
+            try:
+                completion = completion[:completion.index('```')].strip()
+            except:
+                pass
+        
+        # その他の処理も同様に実装
+        patterns = [
+            ('__name__ == "__main__"', 'if __name__ == "__main__":'),
+            ('# Example usage', '# Example usage'),
+            ('# Test examples', '# Test examples'),
+            ('The solution is:', 'The solution is:'),
+            ('The answer is:', 'The answer is:')
+        ]
+        
+        for _, pattern in patterns:
+            if pattern in completion:
+                completion = completion[:completion.index(pattern)].strip()
+        
+        return completion
 
 
 def generate_with_gradients(
@@ -612,5 +587,59 @@ def generate_with_gradients(
     generated_text = tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
     
     return generated_text, outputs
+
+def generate_with_gradients_batch(
+    model: PreTrainedModel,
+    tokenizer,
+    prompts: List[str],
+    max_length: int = 1024,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
+    device: str = "cuda"
+) -> Tuple[List[str], Any]:
+    """バッチ処理による生成関数
+    
+    Args:
+        model: 生成に使用するモデル
+        tokenizer: トークナイザー
+        prompts: 入力プロンプトのリスト
+        max_length: 最大生成長
+        temperature: 生成時の温度
+        top_p: top-p サンプリングの閾値
+        device: 使用するデバイス
+    
+    Returns:
+        List[str]: 生成されたテキストのリスト
+        Any: モデルの出力
+    """
+    # バッチ入力のエンコード
+    inputs = tokenizer(
+        prompts, 
+        return_tensors="pt", 
+        padding=True, 
+        truncation=True
+    ).to(device)
+
+    # バッチ生成
+    with torch.set_grad_enabled(True):
+        outputs = model.generate(
+            **inputs,
+            max_length=max_length,
+            temperature=temperature,
+            top_p=top_p,
+            do_sample=(temperature > 0),
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            output_scores=True,
+            return_dict_in_generate=True
+        )
+    
+    # バッチ出力のデコード
+    generated_texts = tokenizer.batch_decode(
+        outputs.sequences, 
+        skip_special_tokens=True
+    )
+    
+    return generated_texts, outputs
 
 
