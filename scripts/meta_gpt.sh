@@ -1,8 +1,8 @@
 #!/bin/bash
-#PJM -L rscgrp=share
-#PJM --name metagpt_adam00001
+#PJM -L rscgrp=share-short
+#PJM --name metagpt_optimize
 #PJM -L gpu=2
-#PJM -L elapse=5:00:00
+#PJM -L elapse=02:0:00
 #PJM -j
 
 # module load
@@ -35,6 +35,9 @@ INITIAL_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/math_code_jp/me
 #OPTIMIZED_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/math_code_jp/metagpt_optimize/sgd_epochs4_lr0.001_sample100/optimized_lambdas_metagpt_optimize_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
 #RUN_NAME="sgd_epochs4_lr0.001_sample100"
 
+# 開始時刻を記録
+start_time=$(date +%s)
+
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
     --merge_math --merge_code --merge_jp \
@@ -55,7 +58,15 @@ python3 merge_llms_instruct_math_code.py \
 #    --run_name $RUN_NAME \
 #    --optimized_lambda_filepath $OPTIMIZED_LAMBDA_FILEPATH 
 
+# 終了時刻を記録し、実行時間を計算
+end_time=$(date +%s)
+execution_time=$((end_time - start_time))
 
+# 実行時間を時間:分:秒の形式で表示
+hours=$((execution_time / 3600))
+minutes=$(( (execution_time % 3600) / 60 ))
+seconds=$((execution_time % 60))
+echo "実行時間: ${hours}時間 ${minutes}分 ${seconds}秒"
 
 #pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="human_eval",strategy="metagpt" scripts/meta_gpt.sh

@@ -156,3 +156,5 @@ tmp*
 lambdas
 bigcode-evaluation-harness
 env_mbpp
+temp_results
+env*
