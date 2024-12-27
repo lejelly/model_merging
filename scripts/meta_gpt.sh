@@ -1,8 +1,8 @@
 #!/bin/bash
-#PJM -L rscgrp=share-short
-#PJM --name metagpt_optimize
+#PJM -L rscgrp=share
+#PJM --name metagpt_adam00001
 #PJM -L gpu=2
-#PJM -L elapse=2:00:00
+#PJM -L elapse=5:00:00
 #PJM -j
 
 # module load
@@ -32,8 +32,8 @@ STRATEGY=$strategy
 #STRATEGY="attention_based"
 
 INITIAL_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/math_code_jp/metagpt_optimize/initial_lambdas_metagpt_alpha_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
-#OPTIMIZED_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/math_code_jp/metagpt_blackbox/spsa_steps3_lr0.001_sample10/optimized_lambdas_metagpt_blackbox_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
-#RUN_NAME="spsa_steps3_lr0.001_sample10"
+#OPTIMIZED_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/math_code_jp/metagpt_optimize/sgd_epochs4_lr0.001_sample100/optimized_lambdas_metagpt_optimize_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
+#RUN_NAME="sgd_epochs4_lr0.001_sample100"
 
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
@@ -48,10 +48,10 @@ python3 merge_llms_instruct_math_code.py \
     --metagpt \
     --lambda_strategy $STRATEGY \
     --initial_lambda_filepath $INITIAL_LAMBDA_FILEPATH \
-    --num_epochs 5 \
-    --learning_rate 0.001 \
+    --num_epochs 10 \
+    --learning_rate 0.0001 \
     --num_train_samples 100 \
-    --optimizer_type adam 
+    --optimizer_type adam
 #    --run_name $RUN_NAME \
 #    --optimized_lambda_filepath $OPTIMIZED_LAMBDA_FILEPATH 
 

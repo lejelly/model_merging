@@ -541,19 +541,25 @@ class LambdaOptimizer:
                 best_lambdas = self.lambdas.clone()
                 self.logger.info(f"New best loss: {best_loss:.4f} with lambdas: {lambda_str}")
                 
-                # optimized lambdasの保存
+                # optimized lambdasの保存（追記モード）
                 optimized_df = pd.DataFrame({
-                    'epoch': epoch + 1,
-                    'model_name': self.finetuned_model_names,
-                    'lambdas': best_lambdas.detach().cpu().numpy().tolist(),
-                    'loss': best_loss,
-                    'gsm8k_score': scores[0].item(),
-                    'mbpp_score': scores[1].item(),
-                    'ja_mgsm_score': scores[2].item()
+                    'epoch': [epoch + 1],
+                    'model_name': [self.finetuned_model_names],
+                    'lambdas': [best_lambdas.detach().cpu().numpy().tolist()],
+                    'loss': [best_loss],
+                    'gsm8k_score': [scores[0].item()],
+                    'mbpp_score': [scores[1].item()],
+                    'ja_mgsm_score': [scores[2].item()]
                 })
-                optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
+                
+                # ファイルが存在する場合は追記、存在しない場合は新規作成
+                if os.path.exists(self.optimized_lambda_filepath):
+                    optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
+                else:
+                    optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
             
             # メモリの解放
+            del scores, loss, harmonic_mean, merged_params
             torch.cuda.empty_cache()
         
         self.wandb_run.finish()
