@@ -5,7 +5,6 @@ import datasets
 from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
 from transformers import PreTrainedModel
-from vllm import LLM, SamplingParams
 from human_eval.data import read_problems
 import os
 import shutil
@@ -14,6 +13,8 @@ from utils.utils import stream_jsonl, write_jsonl
 from tqdm import tqdm
 import subprocess
 from human_eval.evaluation import evaluate_functional_correctness
+import time
+import jsonlines
 
 from model_merging_methods.task_vector import NewTaskVector
 from proposed_methods import metagpt, TaskVectorCalculator
@@ -28,6 +29,7 @@ import wandb
 from transformers import AutoModelForCausalLM
 import pandas as pd
 from utils.load_config import cache_dir
+import optuna
 
 class LambdaOptimizer:
     def __init__(
@@ -84,11 +86,25 @@ class LambdaOptimizer:
             self.optimizer = torch.optim.SGD([self.lambdas], lr=learning_rate)
         else:
             raise ValueError(f"Unknown optimizer type: {optimizer_type}")
+            
+        # Cosineスケジューラーの追加
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=num_epochs,  # T_maxは学習の総エポック数
+            eta_min=1e-6  # 最小学習率
+        )
         
         # 訓練データの読み込み
         self.gsm8k_data = self._load_gsm8k_train_data()
         self.mbpp_data = self._load_mbpp_train_data()
         self.ja_mgsm_data = self._load_ja_mgsm_train_data()
+        
+        print(self.gsm8k_data)
+        print("--------------------------------")
+        print(self.mbpp_data)
+        print("--------------------------------")
+        print(self.ja_mgsm_data)
+        print("--------------------------------")
         
         # wandbの初期化
         self.wandb_run = wandb.init(
@@ -106,12 +122,22 @@ class LambdaOptimizer:
         )
 
     def _load_gsm8k_train_data(self) -> List[Dict]:
-        """GSM8Kの訓練データを読み込む（ランダムサンプリング）"""
+        """GSM8Kの訓練データをローカルJSONLファイルから読み込む（ランダムサンプリング）"""
         try:
-            dataset = datasets.load_dataset("gsm8k", "main", split="train")
-            # データセットをシャッフルしてからサンプリング
-            shuffled_dataset = dataset.shuffle(seed=self.seed)
-            return shuffled_dataset.select(range(min(self.num_train_samples, len(dataset))))
+            data = []
+            with open("math_code_data/gsm8k.train.jsonl", "r", encoding="utf8") as f:
+                for item in jsonlines.Reader(f):
+                    data.append({
+                        "question": item["question"],
+                        "answer": item["answer"]
+                    })
+            
+            # データをランダムにシャッフル
+            random.seed(self.seed)
+            random.shuffle(data)
+            
+            # 指定されたサンプル数だけ返す
+            return data[:min(self.num_train_samples, len(data))]
         except Exception as e:
             self.logger.error(f"Failed to load GSM8K data: {e}")
             return []
@@ -133,6 +159,7 @@ class LambdaOptimizer:
                 data.append({"task_id": task_id, "prompt": prompt})
             
             # リストをランダムにシャッフル
+            random.seed(self.seed)
             random.shuffle(data)
             return data[:min(self.num_train_samples, len(data))]
         except Exception as e:
@@ -140,16 +167,27 @@ class LambdaOptimizer:
             return []
 
     def _load_ja_mgsm_train_data(self) -> List[Dict]:
-        """ja-MGSMの訓練データを読み込む（ランダムサンプリング）"""
+        """ja-MGSMの訓練データをローカルJSONLファイルから読み込む（ランダムサンプリング）"""
         try:
-            dataset = datasets.load_dataset("juletxara/mgsm", split="train", name="ja")
-            dataset = dataset.select_columns(["question", "answer_number"])
-            # データセットをシャッフルしてからサンプリング
-            shuffled_dataset = dataset.shuffle(seed=self.seed)
-            return shuffled_dataset.select(range(min(self.num_train_samples, len(dataset))))
+            data = []
+            with open("math_code_data/ja_mgsm.train.jsonl", "r", encoding="utf8") as f:
+                for line in f:
+                    item = json.loads(line)
+                    data.append({
+                        "question": item["question"],
+                        "answer_number": item["answer_number"]
+                    })
+            
+            # データをランダムにシャッフル
+            random.seed(self.seed)
+            random.shuffle(data)
+            
+            # 指定されたサンプル数だけ返す
+            return data[:min(self.num_train_samples, len(data))]
         except Exception as e:
             self.logger.error(f"Failed to load ja-MGSM data: {e}")
             return []
+
 
     def create_merged_model(self) -> Dict[str, torch.Tensor]:
         """λを使用してモデルのパラメータをマージ（計算グラフを維持）"""
@@ -161,6 +199,7 @@ class LambdaOptimizer:
                     merged_param = merged_param + lambda_val * tv.task_vector_param_dict[name]
                 merged_params[name] = merged_param
         return merged_params
+
 
     def compute_model_score(self, merged_params: Dict[str, torch.Tensor]) -> torch.Tensor:
         """マージされたパラメータを使用してモデルのスコアを計算（計算グラフを維持）"""
@@ -204,7 +243,7 @@ class LambdaOptimizer:
 
     def _evaluate_gsm8k(self, model: PreTrainedModel) -> torch.Tensor:
         """GSM8Kでの評価（真のバッチ処理版）"""
-        batch_size = 20
+        batch_size = 10
         
         # プロンプトの準備
         gsm8k_ins = []
@@ -252,7 +291,7 @@ class LambdaOptimizer:
 
     def _evaluate_mbpp(self, model: PreTrainedModel) -> torch.Tensor:
         """MBPPでの評価（真のバッチ処理版）"""
-        batch_size = 20
+        batch_size = 10
         
         # プロンプトの準備
         prompts = []
@@ -294,9 +333,9 @@ class LambdaOptimizer:
             torch.cuda.empty_cache()
         
         # 評価用の一時ディレクトリとファイルの設定
-        temp_model_path = f"./save_merge_models/temp_merged_model/code/{self.params_name}"
+        temp_model_path = f"./save_merge_models/temp_merged_model/code/{self.seed}/{self.params_name}"
         os.makedirs(temp_model_path, exist_ok=True)
-        temp_results_folder = f"./temp_results/mbpp/{self.params_name}"
+        temp_results_folder = f"./temp_results/mbpp/{self.seed}/{self.params_name}"
         os.makedirs(temp_results_folder, exist_ok=True)
         
         # モデルと tokenizer の一時保存
@@ -421,100 +460,6 @@ class LambdaOptimizer:
         
         return accuracy_tensor
 
-    def optimize(self) -> np.ndarray:
-        """λ値を最適化（計算グラフを維持）"""
-        try:
-            best_lambdas = None
-            best_loss = float('inf')
-            
-            # モデルを評価モードに設定
-            self.pretrained_model.eval()
-            
-            lambda_str = "[" + ", ".join([f"{l}" for l in self.lambdas]) + "]"
-            self.logger.info(
-                f"Epoch 0 | "
-                f"Initial Lambdas: {lambda_str}"
-            )
-            
-            for epoch in range(self.num_epochs):
-                epoch_start_time = time.time()
-                
-                # 最適化ステップ
-                self.optimizer.zero_grad()
-                merged_params = self.create_merged_model()
-                scores = self.compute_model_score(merged_params)
-                
-                # 調和平均の計算（計算グラフを維持）
-                n = torch.tensor(len(scores), dtype=torch.float32, device=scores.device, requires_grad=True)
-                eps = 1e-8
-                denominator = torch.sum(1.0 / (scores + eps))
-                harmonic_mean = n / denominator
-                
-                # 損失の計算
-                task_loss = 1.0 - harmonic_mean
-                lambda_regularization = 0.01 * torch.sum(self.lambdas ** 2)
-                loss = task_loss + lambda_regularization
-                
-                # 勾配の計算と更新
-                loss.backward()
-                self.optimizer.step()
-                
-                # 現在の状態のロギング
-                with torch.no_grad():
-                    lambda_str = "[" + ", ".join([f"{l}" for l in self.lambdas]) + "]"
-                    self.logger.info(
-                        f"Epoch {epoch+1} | Loss: {loss.item()} | "
-                        f"GSM8K: {scores[0].item()} | MBPP: {scores[1].item()} | "
-                        f"JA-MGSM: {scores[2].item()} | Lambdas: {lambda_str}"
-                    )
-                    
-                    # wandbへのログ記録
-                    self.wandb_run.log({
-                        "epoch": epoch,
-                        "loss": loss.item(),
-                        "gsm8k_score": scores[0].item(),
-                        "mbpp_score": scores[1].item(),
-                        "ja_mgsm_score": scores[2].item(),
-                        "harmonic_mean": harmonic_mean.item(),
-                        **{f"lambda_{i}": l.item() for i, l in enumerate(self.lambdas)}
-                    })
-                
-                # ベストモデルの保存
-                if loss.item() < best_loss:
-                    best_loss = loss.item()
-                    best_lambdas = self.lambdas.clone()
-                    self.logger.info(f"New best loss: {best_loss:.4f} with lambdas: {lambda_str}")
-                    
-                    # optimized lambdasの保存（追記モード）
-                    optimized_df = pd.DataFrame({
-                        'epoch': [epoch + 1],
-                        'model_name': [self.finetuned_model_names],
-                        'lambdas': [best_lambdas.detach().cpu().numpy().tolist()],
-                        'loss': [best_loss],
-                        'gsm8k_score': [scores[0].item()],
-                        'mbpp_score': [scores[1].item()],
-                        'ja_mgsm_score': [scores[2].item()]
-                    })
-                    
-                    # ファイルが存在する場合は追記、存在しない場合は新規作成
-                    if os.path.exists(self.optimized_lambda_filepath):
-                        optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
-                    else:
-                        optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
-                
-                # メモリの解放
-                del scores, loss, harmonic_mean, merged_params
-                torch.cuda.empty_cache()
-                
-                epoch_end_time = time.time()
-                self.logger.info(f"Epoch {epoch+1} took {epoch_end_time - epoch_start_time:.2f} seconds")
-
-        finally:
-            pass
-
-        self.wandb_run.finish()
-        return best_lambdas
-
     def _process_mbpp_completion(self, completion: str) -> str:
         """MBPPの生成結果を処理する補助関数"""
         if '```python' in completion:
@@ -539,6 +484,171 @@ class LambdaOptimizer:
                 completion = completion[:completion.index(pattern)].strip()
         
         return completion
+
+
+    def optimize(self) -> np.ndarray:
+        """λ値を最適化（計算グラフを維持）"""
+        
+        best_lambdas = None
+        best_loss = float('inf')
+        
+        # モデルを評価モードに設定
+        self.pretrained_model.eval()
+        
+        lambda_str = "[" + ", ".join([f"{l}" for l in self.lambdas]) + "]"
+        self.logger.info(
+            f"Epoch 0 | "
+            f"Initial Lambdas: {lambda_str}"
+        )
+        
+        for epoch in range(self.num_epochs):
+            epoch_start_time = time.time()
+            
+            # 最適化ステップ
+            self.optimizer.zero_grad()
+            merged_params = self.create_merged_model()
+            scores = self.compute_model_score(merged_params)
+            
+            # 調和平均の計算（計算グラフを維持）
+            n = torch.tensor(len(scores), dtype=torch.float32, device=scores.device, requires_grad=True)
+            eps = 1e-8
+            denominator = torch.sum(1.0 / (scores + eps))
+            harmonic_mean = n / denominator
+            
+            # 損失の計算
+            task_loss = 1.0 - harmonic_mean
+            loss = task_loss
+            #lambda_regularization = 0.01 * torch.sum(self.lambdas ** 2)
+            #loss = task_loss + lambda_regularization
+            
+            # 勾配の計算と更新
+            loss.backward()
+            self.optimizer.step()
+            self.scheduler.step()  # スケジューラーのステップを追加
+            
+            # 現在の状態のロギング
+            with torch.no_grad():
+                current_lr = self.scheduler.get_last_lr()[0]  # 現在の学習率を取得
+                lambda_str = "[" + ", ".join([f"{l}" for l in self.lambdas]) + "]"
+                self.logger.info(
+                    f"Epoch {epoch+1} | Loss: {loss.item()} | LR: {current_lr:.6f} | "
+                    f"GSM8K: {scores[0].item()} | MBPP: {scores[1].item()} | "
+                    f"JA-MGSM: {scores[2].item()} | Lambdas: {lambda_str}"
+                )
+                
+                # wandbへのログ記録
+                self.wandb_run.log({
+                    "epoch": epoch,
+                    "loss": loss.item(),
+                    "learning_rate": current_lr,  
+                    "gsm8k_score": scores[0].item(),
+                    "mbpp_score": scores[1].item(),
+                    "ja_mgsm_score": scores[2].item(),
+                    "harmonic_mean": harmonic_mean.item(),
+                    **{f"lambda_{i}": l.item() for i, l in enumerate(self.lambdas)}
+                })
+                
+                # optimized lambdasの保存（追記モード）
+                optimized_df = pd.DataFrame({
+                    'epoch': [epoch + 1],
+                    'model_name': [self.finetuned_model_names],
+                    'lambdas': [self.lambdas.clone().cpu().numpy().tolist()],
+                    'loss': [loss.item()],
+                    'gsm8k_score': [scores[0].item()],
+                    'mbpp_score': [scores[1].item()],
+                    'ja_mgsm_score': [scores[2].item()]
+                })
+                
+                # ファイルが存在する場合は追記、存在しない場合は新規作成
+                if os.path.exists(self.optimized_lambda_filepath):
+                    optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
+                else:
+                    optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
+            
+            # ベストモデルの保存
+            if loss.item() < best_loss:
+                best_loss = loss.item()
+                best_lambdas = self.lambdas.clone()
+                self.logger.info(f"New best loss: {best_loss:.4f} with lambdas: {lambda_str}")
+                
+            # メモリの解放
+            del scores, loss, harmonic_mean, merged_params
+            torch.cuda.empty_cache()
+            
+            epoch_end_time = time.time()
+            self.logger.info(f"Epoch {epoch+1} took {epoch_end_time - epoch_start_time:.2f} seconds")
+
+        self.wandb_run.finish()
+        return best_lambdas
+
+    def optimize_with_optuna(self, n_trials: int = 30) -> np.ndarray:
+        """Optunaを使用してλ値を最適化"""
+        
+        def objective(trial):
+            # λ値の探索範囲を設定
+            lambdas = []
+            for i in range(len(self.models_to_merge)):
+                lambda_i = trial.suggest_float(f'lambda_{i}', 0.0, 1.0)
+                lambdas.append(lambda_i)
+            
+            # テンソルに変換（デバイスは既存のself.lambdasと同じに）
+            device = next(self.pretrained_model.parameters()).device  # モデルのデバイスを取得
+            self.lambdas = torch.tensor(lambdas, device=device, dtype=torch.float32)
+            
+            # モデルのマージと評価
+            merged_params = self.create_merged_model()
+            scores = self.compute_model_score(merged_params)
+            
+            # 調和平均の計算（すべての演算を同じデバイスで）
+            n = torch.tensor(len(scores), device=device, dtype=torch.float32)
+            eps = 1e-8
+            denominator = torch.sum(1.0 / (scores + eps))
+            harmonic_mean = n / denominator
+            
+            # 損失の計算
+            task_loss = 1.0 - harmonic_mean
+            loss = task_loss
+            #lambda_regularization = 0.01 * torch.sum(self.lambdas ** 2)
+            #loss = task_loss + lambda_regularization
+            
+            # メモリの解放
+            torch.cuda.empty_cache()
+            
+            return loss.item()
+        
+        # Optunaの学習
+        study = optuna.create_study(direction='minimize')
+        study.optimize(objective, n_trials=n_trials)
+        
+        # 最適なλ値を取得
+        best_lambdas = [study.best_params[f'lambda_{i}'] for i in range(len(self.models_to_merge))]
+        
+        # 最適化完了後、最良の結果のみをログに記録
+        self.wandb_run.log({
+            "best_trial": study.best_trial.number,
+            "best_loss": study.best_trial.value,
+            **{f"best_lambda_{i}": l for i, l in enumerate(best_lambdas)}
+        })
+        
+        # 最適化されたλ値をCSVに保存
+        optimized_df = pd.DataFrame({
+            'model_name': [self.finetuned_model_names],
+            'lambdas': [best_lambdas],
+            'loss': [study.best_trial.value]
+        })
+        
+        if os.path.exists(self.optimized_lambda_filepath):
+            optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
+        else:
+            optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
+        
+        self.logger.info(f"Best trial: {study.best_trial.number}")
+        self.logger.info(f"Best loss: {study.best_trial.value}")
+        self.logger.info(f"Best lambdas: {best_lambdas}")
+        
+        self.wandb_run.finish()
+        
+        return np.array(best_lambdas)
 
 
 def generate_with_gradients(

@@ -27,6 +27,8 @@ import pandas as pd
 
 from optimize_lambdas import LambdaOptimizer
 from optimise_lambdas_spsa import LambdaOptimizerSPSA
+from optimize_lambdas_cross_entropy import LambdaOptimizerCrossEntropy
+from test_lambda_gradients import test_lambda_gradients
 
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
@@ -158,8 +160,8 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         else:
             # ファイル名の生成
             strategy = WeightingStrategy(args.lambda_strategy)
-            params_name = f"{args.optimizer_type}_epochs{args.num_epochs}_lr{args.learning_rate}_sample{args.num_train_samples}"
-            save_dir = f"./lambdas/{'_'.join(merge_task_names)}/{strategy.value}/{params_name}" 
+            params_name = f"{strategy.value}/{args.optimizer_type}_epochs{args.num_epochs}_lr{args.learning_rate}_sample{args.num_train_samples}"
+            save_dir = f"./lambdas/seed{args.seed}/{'_'.join(merge_task_names)}/{params_name}" 
             os.makedirs(save_dir, exist_ok=True)
             model_names_str = '_'.join(sorted([name.split('/')[-1] for name in finetuned_model_names]))
             initial_lambda_filename = f'initial_lambdas_{strategy.value}_{model_names_str}.csv'
@@ -184,33 +186,47 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                 initial_lambdas = initial_df['lambda'].values
             else:    
                 # 新しくλ値を計算
-                if args.lambda_strategy == "metagpt_random_initial_lambda":
+                if args.lambda_strategy == "metagpt_random" or args.lambda_strategy == "optuna":
+                    # ランダムな値(0-1)を生成
+                    initial_lambdas = np.random.rand(len(models_to_merge))
+                elif args.lambda_strategy == "metagpt_random_normalize":
                     # ランダムな値を生成し、合計が1になるように正規化
                     random_values = np.random.rand(len(models_to_merge))
                     initial_lambdas = random_values / np.sum(random_values)
-                elif args.lambda_strategy == "metagpt_average_lambda":
+                elif args.lambda_strategy == "metagpt_average":
                     # モデル数で均等に分割
                     initial_lambdas = np.array([1.0 / len(models_to_merge)] * len(models_to_merge))
-                elif args.lambda_strategy == "metagpt_simple":
+                elif args.lambda_strategy == "metagpt_all_one":
                     # すべての要素を1.0に設定
                     initial_lambdas = np.array([1.0] * len(models_to_merge))
                 else:
                     initial_lambdas = metagpt(pretrained_model, models_to_merge)
                     
                 # initial lambdasの保存
-                initial_df = pd.DataFrame({
-                    'model_name': finetuned_model_names,
-                    'lambda': initial_lambdas
-                })
-                initial_df.to_csv(initial_lambda_filepath, index=False)
+                if args.lambda_strategy != "optuna":
+                    initial_df = pd.DataFrame({
+                        'model_name': finetuned_model_names,
+                        'lambda': initial_lambdas
+                    })
+                    initial_df.to_csv(initial_lambda_filepath, index=False)
             
             if os.path.exists(optimized_lambda_filepath):
                 # optimized lambdasの読み込み
                 optimized_df = pd.read_csv(optimized_lambda_filepath)
-                optimized_df = optimized_df.set_index('model_name').loc[finetuned_model_names].reset_index()
-                optimized_lambdas = optimized_df['lambdas'].values
+                if args.lambda_strategy == "optuna":
+                    # lambdasカラムから直接リストを取得
+                    lambda_str = optimized_df.loc[0, 'lambdas']  
+                    # 文字列からリストに変換
+                    optimized_lambdas = eval(lambda_str)
+                else:
+                    # lossが最小のepochを見つける
+                    min_loss_epoch = optimized_df['loss'].idxmin()
+                    # そのepochのλ値を取得
+                    lambda_str = optimized_df.loc[min_loss_epoch, 'lambdas']
+                    # 文字列からリストに変換
+                    optimized_lambdas = eval(lambda_str)
             else:
-                optimizer = LambdaOptimizer(
+                optimizer = LambdaOptimizerCrossEntropy(
                     seed=args.seed,
                     pretrained_model=pretrained_model,
                     pretrained_model_name=args.pretrained_model_name,
@@ -227,15 +243,21 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                     optimized_lambda_filepath=optimized_lambda_filepath
                 )
                 
-                optimized_lambdas = optimizer.optimize()
+                if args.lambda_strategy == "optuna":
+                   optimized_lambdas = optimizer.optimize_with_optuna()
+                else:
+                   optimized_lambdas = optimizer.optimize()
         
             #print("\nInitial lambdas:")
             #print_lambda_distribution(initial_lambdas, finetuned_model_names)
         print("\nOptimized lambdas:")
         print_lambda_distribution(optimized_lambdas, finetuned_model_names)
-        print()
         
-        
+        # optimized_lambdasの値をargs.gradationに設定
+        args.gradation1 = float(optimized_lambdas[0])
+        args.gradation2 = float(optimized_lambdas[1])
+        args.gradation3 = float(optimized_lambdas[2])
+    """        
     if args.single_exclusive_model:
         masked_param_dicts = mask_model_weights_exclusive(finetuned_models=models_to_merge, pretrained_model=merged_model, 
                                                         exclude_param_names_regex=[], weight_format=args.weight_format,
@@ -269,7 +291,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
                                                     exclusive_dropout=args.exclusive_dropout,
                                                     gradation_coefficients=optimized_lambdas)
 
-    """
+
     save_instruct_model_path = save_math_model_path = save_code_model_path = save_jp_model_path = None
     if args.merge_instruct:
         save_instruct_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/instruct/{args.dataset_name}/{args.save_model_name}"
@@ -384,16 +406,6 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
 
     del merged_model, tokenizers
     torch.cuda.empty_cache()    
-    
-
-    ""
-    if args.dataset_name == "ja_mgsm":
-        args.test_data_path = "juletxara/mgsm"
-        test_ja_mgsm(llm=llm, test_data_path=args.test_data_path, args=args, logger=logger,
-                        start_index=args.start_index, end_index=args.end_index, 
-                        comp_file_path=args.comp_file_path, model_name=args.model_name_in_comp_file, drop_rate=args.weight_mask_rates,
-                        log_resp_path=args.log_resp_path, gradation1=args.gradation1, gradation2=args.gradation2)
-    ""
     
     for save_model_path in save_model_paths:
         if save_model_path is not None:

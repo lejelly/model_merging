@@ -1,6 +1,6 @@
 {
   "mbpp": {
-    "pass@1": 0.44
+    "pass@1": 0.438
   },
   "config": {
     "prefix": "",
@@ -31,7 +31,7 @@
     "postprocess": true,
     "allow_code_execution": true,
     "generation_only": false,
-    "load_generations_path": "/work/gb20/b20042/model_merging/save_gen_codes_results/math_code_jp/mbpp/adam_epochs4_lr0.0001_sample100.jsonl",
+    "load_generations_path": "/work/gb20/b20042/model_merging/save_gen_codes_results/math_code_jp/mbpp/optimize_adam_epochs20_lr0.0001_sample10.jsonl",
     "load_data_path": null,
     "metric_output_path": "evaluation_results.json",
     "save_generations": false,
