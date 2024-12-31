@@ -1,7 +1,7 @@
 #!/bin/bash
 #PJM -L rscgrp=share-short
 #PJM --name metagpt
-#PJM -L gpu=2
+#PJM -L gpu=4
 #PJM -L elapse=02:00:00
 #PJM -j
 
@@ -44,9 +44,9 @@ python3 merge_llms_instruct_math_code.py \
     --dataset_name $DATASETNAME \
     --metagpt \
     --lambda_strategy $STRATEGY \
-    --num_epochs 10 \
-    --learning_rate 0.0001 \
-    --num_train_samples 10 \
+    --num_epochs 2 \
+    --learning_rate 0.001 \
+    --num_train_samples 1 \
     --optimizer_type adam \
     --initial_lambda_filepath $INITIAL_LAMBDA_FILEPATH 
 #    --run_name $RUN_NAME \
@@ -61,6 +61,7 @@ hours=$((execution_time / 3600))
 minutes=$(( (execution_time % 3600) / 60 ))
 seconds=$((execution_time % 60))
 echo "実行時間: ${hours}時間 ${minutes}分 ${seconds}秒"
+
 
 #pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="human_eval",strategy="metagpt" scripts/meta_gpt.sh
