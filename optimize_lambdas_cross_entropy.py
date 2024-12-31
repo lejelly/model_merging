@@ -81,7 +81,6 @@ class NewTaskVector:
         self.task_vector_param_dict = {}
         with torch.no_grad():  # 勾配計算不要
             for (n1, p1), (n2, p2) in zip(pretrained_model.named_parameters(), finetuned_model.named_parameters()):
-                # CPU上で差分を計算し、float32からfloat16に変換してメモリを節約
                 diff = (p2.cpu() - p1.cpu()).half()
                 self.task_vector_param_dict[n1] = diff
                 
@@ -92,34 +91,46 @@ class NewTaskVector:
 # forward 時に (base_param + Σ(λ_i * diff_i)) を合成するラッパークラス
 ###############################################################################
 class MergedModelWrapper(nn.Module):
-    """
-    - self.pretrained_model は元のモデル (nn.Module)
-    - forwardのたびに、base_param + Σ(λ_i * diff_i) を計算し、functional_call で実行
-    - こうすることで、合成パラメータ ←→ λ が同一計算グラフに乗り、勾配が途切れない
-    """
-    def __init__(self, pretrained_model, task_vectors, lambdas):
+    def __init__(self, pretrained_model, task_vectors, lambdas, chunk_size=1024):
         super().__init__()
         self.pretrained_model = pretrained_model
         self.task_vectors = task_vectors
         self.lambdas = lambdas
+        self.chunk_size = chunk_size
 
     def forward(self, input_ids, labels=None, **kwargs):
-        # （デバイスや dtype の変換は呼び出し側でやっている前提）
-
-        # 1. base_param + Σ( λ_i * diff_i ) をパラメータ名 -> tensor の辞書として構築
+        device = self.lambdas.device
         param_dict = {}
-        with torch.set_grad_enabled(True):  # λ の勾配を通す
+
+        with torch.set_grad_enabled(True):
             for name, base_param in self.pretrained_model.named_parameters():
-                merged_param = base_param.to(self.lambdas.device).half()
+                # ベースパラメータを半精度＋GPU
+                base_gpu = base_param.to(device).half()
+
+                # チャンク合成結果
+                merged_param = base_gpu
+
+                # 各タスクの diff をチャンク分割して足す
                 for i, tv in enumerate(self.task_vectors):
-                    diff = tv.task_vector_param_dict[name].to(self.lambdas.device).half()
+                    diff_cpu = tv.task_vector_param_dict[name].cpu().float()
+                    # 必要なら事前に .half() も可 => diff_cpu = diff_cpu.half()
 
-                    merged_param = merged_param + (self.lambdas[i] * diff)
+                    # λ_i (GPU上)
+                    lam = self.lambdas[i]
 
-                # param_dict に登録
+                    # 既に merged_param を得ている状態なら
+                    #   merged_param = merge_in_chunks(merged_param, diff_cpu, lam, device, self.chunk_size)
+                    # という形で都度更新していく
+                    merged_param = merge_in_chunks(
+                        merged_param,   # GPU上のベース
+                        diff_cpu,       # CPU上のdiff
+                        lam,            # GPU上のλ
+                        device,
+                        self.chunk_size
+                    )
+
                 param_dict[name] = merged_param
 
-        # 2. functional_call でパラメータを差し替えて forward 実行
         outputs = stateless.functional_call(
             self.pretrained_model,
             param_dict,
@@ -127,6 +138,32 @@ class MergedModelWrapper(nn.Module):
             {'labels': labels, **kwargs}
         )
         return outputs
+
+def merge_in_chunks(base_gpu, diff_cpu, lam, device, chunk_size=1024):
+    """
+    base_gpu   : GPU上の [X, ...] shape のテンソル (fp16)
+    diff_cpu   : CPU上にある同shapeのテンソル
+    lam        : GPUのスカラー or テンソル
+    chunk_size : 分割サイズ
+    """
+    splitted_base = base_gpu.split(chunk_size, dim=0)
+    splitted_diff = diff_cpu.split(chunk_size, dim=0)
+
+    new_chunks = []
+    for i, diff_chunk_cpu in enumerate(splitted_diff):
+        base_chunk = splitted_base[i]   # GPU上
+        diff_chunk_gpu = diff_chunk_cpu.to(device)  # 1チャンク分だけGPU転送
+
+        merged_chunk = base_chunk + (lam * diff_chunk_gpu)
+
+        new_chunks.append(merged_chunk)
+
+        # メモリ解放
+        del diff_chunk_gpu
+        torch.cuda.empty_cache()
+
+    merged_param = torch.cat(new_chunks, dim=0)
+    return merged_param
 
 
 ###############################################################################
@@ -163,10 +200,23 @@ class LambdaOptimizerCrossEntropy:
     ):
         self.seed = seed
         self.logger = logger or logging.getLogger(__name__)
-        self.pretrained_model = pretrained_model
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # 8bit量子化モデルの場合は.to()を使用しない
+        if hasattr(pretrained_model, 'is_loaded_in_8bit') and pretrained_model.is_loaded_in_8bit:
+            self.pretrained_model = pretrained_model
+        else:
+            self.pretrained_model = pretrained_model.to(self.device)
+            
+        self.models_to_merge = []
+        for model in models_to_merge:
+            if hasattr(model, 'is_loaded_in_8bit') and model.is_loaded_in_8bit:
+                self.models_to_merge.append(model)
+            else:
+                self.models_to_merge.append(model.to(self.device))
+        
         self.pretrained_model_name = pretrained_model_name
         self.tokenizers = tokenizers  # [tok_gsm8k, tok_mbpp, tok_ja_mgsm]
-        self.models_to_merge = models_to_merge
         self.num_epochs = num_epochs
         self.learning_rate = learning_rate
         self.batch_size = batch_size
@@ -176,12 +226,6 @@ class LambdaOptimizerCrossEntropy:
         if initial_lambdas is None:
             initial_lambdas = np.zeros(len(models_to_merge))
 
-        # モデルとTask Vectorsを最初からGPUに配置
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # pretrained_modelは一時的にGPUに移動して差分計算後、CPUに戻す
-        self.pretrained_model = pretrained_model.to(self.device)
-        
         # Task Vectorsの初期化
         self.task_vectors = []
         for ft_model in models_to_merge:
