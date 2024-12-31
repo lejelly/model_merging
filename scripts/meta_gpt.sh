@@ -11,7 +11,10 @@ module load gcc/8.3.1
 module load python/3.10.13
 module load cuda/12.1
 module load cudnn/8.8.1
+source work/bin/activate
+python tmp.py
 
+<< COMMENTOUT
 DATASETNAME=$dataset
 SEED=$seed
 MERGE_METHOD=task_arithmetic
@@ -94,3 +97,4 @@ echo "実行時間: ${hours}時間 ${minutes}分 ${seconds}秒"
 #pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt_optimize" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="mbpp",strategy="metagpt_optimize" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt_optimize" scripts/meta_gpt.sh
+COMMENTOUT
