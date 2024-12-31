@@ -1,7 +1,7 @@
 #!/bin/bash
 #PJM -L rscgrp=share-short
 #PJM --name metagpt_compare
-#PJM -L gpu=2
+#PJM -L gpu=4
 #PJM -L elapse=02:00:00
 #PJM -j
 

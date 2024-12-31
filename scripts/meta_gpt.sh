@@ -1,7 +1,7 @@
 #!/bin/bash
 #PJM -L rscgrp=share-short
 #PJM --name metagpt
-#PJM -L gpu=2
+#PJM -L gpu=4
 #PJM -L elapse=02:00:00
 #PJM -j
 
@@ -11,10 +11,7 @@ module load gcc/8.3.1
 module load python/3.10.13
 module load cuda/12.1
 module load cudnn/8.8.1
-source work/bin/activate
-python tmp.py
 
-<< COMMENTOUT
 DATASETNAME=$dataset
 SEED=$seed
 MERGE_METHOD=task_arithmetic
@@ -34,15 +31,6 @@ INITIAL_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/initial_lambdas
 
 # 開始時刻を記録
 start_time=$(date +%s)
-
-# accelerate launch train_lambdas.py \
-#     --num_train_samples 2 \
-#     --learning_rate 0.001 \
-#     --num_epochs 2 \
-#     --batch_size 2 \
-#     --seed $SEED \
-#     --lambda_strategy $STRATEGY \
-#     --initial_lambda_filepath $INITIAL_LAMBDA_FILEPATH 
 
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
@@ -97,4 +85,3 @@ echo "実行時間: ${hours}時間 ${minutes}分 ${seconds}秒"
 #pjsub -g gb20 -x dataset="gsm8k",strategy="metagpt_optimize" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="mbpp",strategy="metagpt_optimize" scripts/meta_gpt.sh
 #pjsub -g gb20 -x dataset="ja_mgsm",strategy="metagpt_optimize" scripts/meta_gpt.sh
-COMMENTOUT
