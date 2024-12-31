@@ -95,14 +95,17 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
 
     try:
         pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+        pretrained_model.gradient_checkpointing_enable()
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
     except:
         if "meta-llama/Llama-2-7b" in args.pretrained_model_name:
             from transformers import LlamaForCausalLM, LlamaTokenizer
             pretrained_model = LlamaForCausalLM.from_pretrained("/work/gb20/b20042/model_merging/llama2")
+            pretrained_model.gradient_checkpointing_enable()
             pretrained_tokenizer = LlamaTokenizer.from_pretrained("/work/gb20/b20042/model_merging/llama2")
         else:
             pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
+            pretrained_model.gradient_checkpointing_enable()
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
     
     
@@ -541,6 +544,7 @@ if __name__ == "__main__":
     merging_method = MergingMethod(merging_method_name=args.merging_method_name)
     for finetuned_model_name in finetuned_model_names:
         finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+        finetuned_model.gradient_checkpointing_enable()
         finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name),)
         models_to_merge.append(finetuned_model)
         finetuned_tokenizers.append(finetuned_tokenizer)
