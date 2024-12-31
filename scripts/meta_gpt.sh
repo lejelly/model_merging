@@ -1,7 +1,7 @@
 #!/bin/bash
 #PJM -L rscgrp=share-short
 #PJM --name metagpt
-#PJM -L gpu=4
+#PJM -L gpu=2
 #PJM -L elapse=02:00:00
 #PJM -j
 
@@ -31,6 +31,15 @@ INITIAL_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/initial_lambdas
 
 # 開始時刻を記録
 start_time=$(date +%s)
+
+# accelerate launch train_lambdas.py \
+#     --num_train_samples 2 \
+#     --learning_rate 0.001 \
+#     --num_epochs 2 \
+#     --batch_size 2 \
+#     --seed $SEED \
+#     --lambda_strategy $STRATEGY \
+#     --initial_lambda_filepath $INITIAL_LAMBDA_FILEPATH 
 
 python3 merge_llms_instruct_math_code.py \
     --seed $SEED \
