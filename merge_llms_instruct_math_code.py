@@ -16,19 +16,14 @@ from utils.load_config import cache_dir
 from utils.utils import delete_all_models, aggressive_clear_gpu_memory
 
 import numpy as np
+import pandas as pd
 from typing import List
 from transformers import PreTrainedModel
 from tqdm import tqdm
 
-from proposed_methods import metagpt, WeightingStrategy, metagpt_advanced, visualize_task_similarities, calculate_lambda_optimized, calculate_lambda_full, calc_MetaRiemann, metagpt_strict, profile_metagpt_strict, analyze_task_vectors
+from proposed_methods import metagpt, WeightingStrategy
 from calculate_lambdas import calculate_and_save_lambdas
-
-import pandas as pd
-
-from optimize_lambdas import LambdaOptimizer
-from optimise_lambdas_spsa import LambdaOptimizerSPSA
 from optimize_lambdas_cross_entropy import LambdaOptimizerCrossEntropy
-from test_lambda_gradients import test_lambda_gradients
 
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
@@ -94,19 +89,17 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     logger.info(f"configuration is {args}")
 
     try:
-        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16, load_in_4bit=True)
+        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="auto", torch_dtype=torch.bfloat16)
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
-        pretrained_model.gradient_checkpointing_enable()
     except:
         if "meta-llama/Llama-2-7b" in args.pretrained_model_name:
             from transformers import LlamaForCausalLM, LlamaTokenizer
             pretrained_model = LlamaForCausalLM.from_pretrained("/work/gb20/b20042/model_merging/llama2")
             pretrained_tokenizer = LlamaTokenizer.from_pretrained("/work/gb20/b20042/model_merging/llama2")
-            pretrained_model.gradient_checkpointing_enable()
         else:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16, load_in_4bit=True)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="auto", torch_dtype=torch.bfloat16)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
-            pretrained_model.gradient_checkpointing_enable()
+
     
     
     if "GAIR/Abel-7B-002" in finetuned_model_names:
@@ -543,9 +536,8 @@ if __name__ == "__main__":
     finetuned_tokenizers = []
     merging_method = MergingMethod(merging_method_name=args.merging_method_name)
     for finetuned_model_name in finetuned_model_names:
-        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat16, load_in_4bit=True)
+        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="auto", torch_dtype=torch.bfloat16)
         finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name),)
-        finetuned_model.gradient_checkpointing_enable()
         models_to_merge.append(finetuned_model)
         finetuned_tokenizers.append(finetuned_tokenizer)
 

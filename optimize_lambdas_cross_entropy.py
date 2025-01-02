@@ -92,17 +92,17 @@ def load_ja_mgsm_data(path="math_code_data/ja_mgsm.train.jsonl", num_samples=10,
 ###############################################################################
 class NewTaskVector:
     """
-    pretrained_model と finetuned_model の差分をとった辞書:
-      'param_name' -> Tensor(差分)
+    pretrained_model と finetuned_model の差分をとった辞書: 
+      'param_name' -> GPU上に保持される Tensor(差分)
     """
     def __init__(self, pretrained_model, finetuned_model, exclude_param_names_regex=[]):
         self.task_vector_param_dict = {}
-        with torch.no_grad():  # 勾配計算不要
+        with torch.no_grad():
             is_4bit_base = hasattr(pretrained_model, 'is_loaded_in_4bit') and pretrained_model.is_loaded_in_4bit
             is_4bit_ft   = hasattr(finetuned_model, 'is_loaded_in_4bit') and finetuned_model.is_loaded_in_4bit
 
             for (n1, p1), (n2, p2) in zip(pretrained_model.named_parameters(), finetuned_model.named_parameters()):
-                # GPU上で4bit→float16に変換
+                # 必要に応じてfloat16 GPU上へ転送
                 if is_4bit_base:
                     p1_data = p1.to(dtype=torch.float16)
                 else:
@@ -113,77 +113,65 @@ class NewTaskVector:
                 else:
                     p2_data = p2.to(device='cuda', dtype=torch.float16)
 
-                # GPU上でfloat16のまま差分を計算
-                diff = (p2_data - p1_data)
-                self.task_vector_param_dict[n1] = diff.cpu()  # CPUに移動して保存
-
+                # 差分をGPU上に保持
+                diff = p2_data - p1_data
+                self.task_vector_param_dict[n1] = diff  # GPU上
 
 ###############################################################################
 # forward 時に (base_param + Σ(λ_i * diff_i)) を合成するラッパークラス
 ###############################################################################
 class MergedModelWrapper(nn.Module):
-    def __init__(self, pretrained_model, task_vectors, lambdas, chunk_size=256):
+    """
+    base_param + Σ(λ_i * diff_i) を一度にGPU上で合成してforwardするラッパー
+    """
+    def __init__(self, pretrained_model, task_vectors, lambdas):
         super().__init__()
         self.pretrained_model = pretrained_model
         self.task_vectors = task_vectors
         self.lambdas = lambdas  # 学習対象 (requires_grad=True) を想定
-        self.chunk_size = chunk_size
 
-        # 8-bitモデルかどうかの判定
         self.is_4bit = hasattr(pretrained_model, 'is_loaded_in_4bit') and pretrained_model.is_loaded_in_4bit
 
-        # base_model を freeze
+        # ベースモデルをfreeze
         for param in self.pretrained_model.parameters():
             param.requires_grad = False
 
     def forward(self, input_ids, labels=None, **kwargs):
+        """
+        1. ベースパラメータをGPUへコピー (4bitの場合はfloat16変換)
+        2. 全タスクベクトル(diff)を GPU 上で足し合わせる
+        3. functional_callでforward
+        """
         device = self.lambdas.device
         input_ids = input_ids.to(device)
         if labels is not None:
             labels = labels.to(device)
-            
-        # 合成したパラメータを格納する辞書
+
+        # 合成後パラメータを保持する辞書
         param_dict = {}
 
-        with torch.set_grad_enabled(self.training):
-            with autocast(enabled=True):
-                for name, base_param in self.pretrained_model.named_parameters():
-                    if self.is_4bit:
-                        # 4bitモデルの場合は直接float16に変換
-                        base_gpu = base_param.to(dtype=torch.float16)
-                    else:
-                        # ここでデバイスとデータ型を明示的に指定
-                        base_gpu = base_param.to(device=device, dtype=torch.float16)
+        with torch.set_grad_enabled(self.training), autocast(enabled=True):
+            for name, base_param in self.pretrained_model.named_parameters():
+                # base_paramをGPUへ(float16)
+                if self.is_4bit:
+                    base_gpu = base_param.to(dtype=torch.float16)
+                else:
+                    base_gpu = base_param.to(device=device, dtype=torch.float16)
 
-                    # in-place 演算用に clone()
-                    base_gpu = base_gpu.clone()
+                base_gpu = base_gpu.clone()
 
-                    # フラット化
-                    base_flat = base_gpu.view(-1)
+                # 各task_vector(diff)を直接加算（すでにGPU上にある）
+                for i, tv in enumerate(self.task_vectors):
+                    diff = tv.task_vector_param_dict[name]  # GPU上
+                    lam = self.lambdas[i].to(dtype=torch.float16)
+                    base_gpu += lam * diff
 
-                    # 各タスクベクトルを足しこむ
-                    for i, tv in enumerate(self.task_vectors):
-                        diff_cpu = tv.task_vector_param_dict[name]  # CPU上 (fp16)
-                        lam = self.lambdas[i].to(dtype=torch.float16)  # fp32 → fp16
+                param_dict[name] = base_gpu
 
-                        diff_flat = diff_cpu.view(-1)
-                        total_size = base_flat.size(0)
-
-                        idx = 0
-                        while idx < total_size:
-                            end_idx = min(idx + self.chunk_size, total_size)
-                            diff_chunk = diff_flat[idx:end_idx].to(device, non_blocking=True)
-                            base_flat[idx:end_idx] += lam * diff_chunk
-                            idx = end_idx
-                            del diff_chunk
-
-                    # 形状を戻して param_dict に保存
-                    param_dict[name] = base_gpu.view(base_param.shape)
-
-        # functional_call を使って forward (ここでもデバイスを明示的に指定)
+        # stateless.functional_callでforward
         outputs = stateless.functional_call(
-            self.pretrained_model.to(device),  # モデル自体もデバイスに移動
-            {k: v.to(device) for k, v in param_dict.items()},  # パラメータも確実にデバイスに移動
+            self.pretrained_model.to(device),
+            param_dict,
             (input_ids,),
             {'labels': labels, **kwargs}
         )
@@ -204,10 +192,10 @@ class LambdaOptimizerCrossEntropy:
     def __init__(
         self,
         seed: int,
-        pretrained_model,       # transformers の PreTrainedModel (可能性として4bitモデル)
+        pretrained_model,       # transformers の PreTrainedModel (4bitモデルの可能性あり)
         pretrained_model_name: str,
         tokenizers,             # [tok_gsm8k, tok_mbpp, tok_ja_mgsm]
-        models_to_merge: List,  # finetuned models (可4bit)
+        models_to_merge: List,  # finetuned models (4bitの可能性あり)
         initial_lambdas: Optional[np.ndarray] = None,
         num_epochs: int = 10,
         learning_rate: float = 0.001,
@@ -226,14 +214,14 @@ class LambdaOptimizerCrossEntropy:
         self.logger = logger or logging.getLogger(__name__)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # デバッグ用にmodels_to_mergeが3つ同じ小さなモデルが入っているため、パラメータを少しずつずらす
-        with torch.no_grad():
-            for i, model in enumerate(models_to_merge):
-                for param in model.parameters():
-                    param.add_(torch.randn_like(param) * 0.01 * (i + 1))
+        # デバッグ用にmodels_to_mergeに同じモデルが3つ入っている場合、それぞれのパラメータを少し変更する
+        for i, model in enumerate(models_to_merge):
+            for name, param in model.named_parameters():
+                with torch.no_grad():
+                    param.add_(torch.randn_like(param) * 0.1 * (i + 1))
 
         self.pretrained_model = pretrained_model
-        # 4bitモデルでない場合はGPUに .to(device)
+        # 4bitモデルでない場合は .to(device)
         if not (hasattr(self.pretrained_model, 'is_loaded_in_4bit') and self.pretrained_model.is_loaded_in_4bit):
             self.pretrained_model = self.pretrained_model.to(self.device)
 
@@ -262,12 +250,7 @@ class LambdaOptimizerCrossEntropy:
                 tv = NewTaskVector(self.pretrained_model, ft_model)
                 self.task_vectors.append(tv)
 
-        # pretrained_modelをCPUに戻す (4bitならGPUのまま)
-        if not (hasattr(self.pretrained_model, 'is_loaded_in_4bit') and self.pretrained_model.is_loaded_in_4bit):
-            self.pretrained_model = self.pretrained_model.cpu()
-            torch.cuda.empty_cache()
-
-        # λ (GPUに配置)
+        # λ (GPU上に配置)
         self.lambdas = torch.tensor(
             initial_lambdas, 
             requires_grad=True, 
@@ -311,7 +294,7 @@ class LambdaOptimizerCrossEntropy:
         np.random.seed(seed)
         torch.manual_seed(seed)
 
-        # データ (各10件程度)
+        # データ (各10件程度をサンプリング)
         self.gsm8k_data = load_gsm8k_data(num_samples=self.num_train_samples, seed=seed)
         self.mbpp_data = load_mbpp_data(num_samples=self.num_train_samples, seed=seed)
         self.ja_mgsm_data = load_ja_mgsm_data(num_samples=self.num_train_samples, seed=seed)
@@ -619,7 +602,7 @@ class LambdaOptimizerCrossEntropy:
 
         self.optimizer.zero_grad()
 
-        # MergedModelWrapper を都度作成
+        # MergedModelWrapper を生成 (すべてGPU上で実行)
         merged_model = MergedModelWrapper(
             pretrained_model=(
                 self.pretrained_model 
@@ -674,18 +657,8 @@ class LambdaOptimizerCrossEntropy:
         scaler = GradScaler()
 
         for epoch in range(self.num_epochs):
-            # ↓GradScalerを使うならこういう書き方に置き換える例↓
-            """
-            self.optimizer.zero_grad()
-            with autocast(device_type='cuda', dtype=torch.float16):
-                total_loss = self.train_one_epoch(batch_size=self.batch_size)
-            scaler.scale(total_loss).backward()
-            scaler.step(self.optimizer)
-            scaler.update()
-            epoch_loss = total_loss.item()
-            """
-            # ↑ ただし、ここでは下記実装（train_one_epoch内でbackwardまで行う）を優先
-
+            # ここでは train_one_epoch 内部で backward() しているため、
+            # autocast + GradScalerパターンと干渉しない実装になっています。
             epoch_loss = self.train_one_epoch(batch_size=self.batch_size)
 
             self.wandb_run.log({
