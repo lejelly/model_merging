@@ -152,7 +152,8 @@ class MergedModelWrapper(nn.Module):
                         # 4bitモデルの場合は直接float16に変換
                         base_gpu = base_param.to(dtype=torch.float16)
                     else:
-                        base_gpu = base_param.to(device, dtype=torch.float16)
+                        # ここでデバイスとデータ型を明示的に指定
+                        base_gpu = base_param.to(device=device, dtype=torch.float16)
 
                     # in-place 演算用に clone()
                     base_gpu = base_gpu.clone()
@@ -179,10 +180,10 @@ class MergedModelWrapper(nn.Module):
                     # 形状を戻して param_dict に保存
                     param_dict[name] = base_gpu.view(base_param.shape)
 
-        # functional_call を使って forward
+        # functional_call を使って forward (ここでもデバイスを明示的に指定)
         outputs = stateless.functional_call(
-            self.pretrained_model,
-            param_dict,
+            self.pretrained_model.to(device),  # モデル自体もデバイスに移動
+            {k: v.to(device) for k, v in param_dict.items()},  # パラメータも確実にデバイスに移動
             (input_ids,),
             {'labels': labels, **kwargs}
         )
@@ -224,6 +225,12 @@ class LambdaOptimizerCrossEntropy:
         self.seed = seed
         self.logger = logger or logging.getLogger(__name__)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        # デバッグ用にmodels_to_mergeが3つ同じ小さなモデルが入っているため、パラメータを少しずつずらす
+        with torch.no_grad():
+            for i, model in enumerate(models_to_merge):
+                for param in model.parameters():
+                    param.add_(torch.randn_like(param) * 0.01 * (i + 1))
 
         self.pretrained_model = pretrained_model
         # 4bitモデルでない場合はGPUに .to(device)
