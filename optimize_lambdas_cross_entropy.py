@@ -147,12 +147,11 @@ class MergedModelWrapper(nn.Module):
         if labels is not None:
             labels = labels.to(device)
 
-        # 合成後パラメータを保持する辞書
         param_dict = {}
 
-        with torch.set_grad_enabled(self.training), autocast(enabled=True):
+        # 勾配計算を有効にする
+        with torch.enable_grad():
             for name, base_param in self.pretrained_model.named_parameters():
-                # base_paramをGPUへ(float16)
                 if self.is_4bit:
                     base_gpu = base_param.to(dtype=torch.float16)
                 else:
@@ -160,10 +159,10 @@ class MergedModelWrapper(nn.Module):
 
                 base_gpu = base_gpu.clone()
 
-                # 各task_vector(diff)を直接加算（すでにGPU上にある）
+                # 各task_vectorを個別に加算
                 for i, tv in enumerate(self.task_vectors):
-                    diff = tv.task_vector_param_dict[name]  # GPU上
-                    lam = self.lambdas[i].to(dtype=torch.float16)
+                    diff = tv.task_vector_param_dict[name]
+                    lam = self.lambdas[i]  # .to(dtype=torch.float16)を削除
                     base_gpu += lam * diff
 
                 param_dict[name] = base_gpu
@@ -208,17 +207,11 @@ class LambdaOptimizerCrossEntropy:
         params_name: str = None,
         finetuned_model_names: List[str] = None,
         optimized_lambda_filepath: str = None,
-        max_length: int = 256,
+        max_length: int = 1024,
     ):
         self.seed = seed
         self.logger = logger or logging.getLogger(__name__)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # デバッグ用にmodels_to_mergeに同じモデルが3つ入っている場合、それぞれのパラメータを少し変更する
-        for i, model in enumerate(models_to_merge):
-            for name, param in model.named_parameters():
-                with torch.no_grad():
-                    param.add_(torch.randn_like(param) * 0.1 * (i + 1))
 
         self.pretrained_model = pretrained_model
         # 4bitモデルでない場合は .to(device)
@@ -600,18 +593,16 @@ class LambdaOptimizerCrossEntropy:
         print("\n=== train_one_epoch start ===")
         print(f"Initial λ values: {self.lambdas.detach().cpu().numpy()}")
 
+        # 勾配をクリア
         self.optimizer.zero_grad()
 
-        # MergedModelWrapper を生成 (すべてGPU上で実行)
+        # MergedModelWrapperを生成
         merged_model = MergedModelWrapper(
-            pretrained_model=(
-                self.pretrained_model 
-                if (hasattr(self.pretrained_model, 'is_loaded_in_4bit') and self.pretrained_model.is_loaded_in_4bit) 
-                else self.pretrained_model.to(self.device)
-            ),
+            pretrained_model=self.pretrained_model,
             task_vectors=self.task_vectors,
             lambdas=self.lambdas
         )
+        merged_model.train()  # 学習モードに設定
         merged_model.to(self.device)
 
         tasks = [
@@ -623,21 +614,24 @@ class LambdaOptimizerCrossEntropy:
         total_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
 
         for task_name, data, tokenizer, compute_loss_fn in tasks:
-            batches = self.make_batches(data, batch_size)
             task_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+            batches = self.make_batches(data, batch_size)
 
             for i, batch in enumerate(batches):
                 batch_loss = compute_loss_fn(batch, tokenizer, merged_model, self.max_length)
-                task_loss = task_loss + batch_loss
+                task_loss = task_loss + batch_loss * (1.0 / len(batches))  # 平均を取る
 
-            task_loss = task_loss / len(batches)
             total_loss = total_loss + task_loss
-
             print(f"[{task_name}] loss = {task_loss.item():.4f}")
 
+        # 勾配計算
         total_loss.backward()
+        
+        # λの勾配を確認（デバッグ用）
         print(f"Total loss = {total_loss.item():.4f}")
+        print("Lambda gradients:", self.lambdas.grad.detach().cpu().numpy() if self.lambdas.grad is not None else None)
 
+        # 最適化ステップ
         self.optimizer.step()
         if self.scheduler is not None:
             self.scheduler.step()

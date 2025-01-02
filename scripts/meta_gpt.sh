@@ -2,6 +2,7 @@
 
 # module load
 source import-env.sh .env
+
 DATASETNAME=$1
 SEED=$2
 MERGE_METHOD=task_arithmetic
@@ -12,6 +13,7 @@ LOG_RESP_PATH=./results_metagpt/${SEED}/math_code_jp/${STRATEGY}/${DATASETNAME}/
 
 # environment setup
 cd $PATH_TO_WORKING_DIR
+source work/bin/activate
 huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
 #INITIAL_LAMBDA_FILEPATH="/work/gb20/b20042/model_merging/lambdas/initial_lambdas_metagpt_alpha_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
@@ -52,4 +54,4 @@ seconds=$((execution_time % 60))
 echo "実行時間: ${hours}時間 ${minutes}分 ${seconds}秒"
 
 
-#bash scripts/meta_gpt.sh gsm8k 1234 metagpt_optimize
+#bash scripts/meta_gpt.sh gsm8k 0 metagpt_optimize

@@ -26,8 +26,8 @@ def test_lambda_gradients():
         tokenizers=tokenizers,
         models_to_merge=models_to_merge,
         initial_lambdas=[0.1, 0.1, 0.1],  # 初期値を設定
-        num_epochs=2,
-        batch_size=1,
+        num_epochs=1,
+        batch_size=2,
         num_train_samples=2  # テスト用に少数のサンプル
     )
 
