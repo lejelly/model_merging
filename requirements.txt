@@ -1,14 +1,13 @@
 torch
 transformers
 datasets
-vllm
+numpy==1.26.4
 human_eval
-numpy
 tqdm
 accelerate
 jsonlines
 Fraction
 ninja
-flash-attn
+packaging
 fasttext
 matplotlib
