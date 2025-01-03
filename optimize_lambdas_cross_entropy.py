@@ -166,21 +166,26 @@ class LayerwiseMergedModelWrapper(nn.Module):
                 full_name = f"{module_prefix}.{param_name}"
                 self._original_params[full_name] = param
 
-                # 1. 一時変数をすぐに解放するcontextmanagerを使用
+                # デバッグ用：λの勾配状態を確認
+                print(f"\nPre-hook for {full_name}")
+                print(f"λ requires_grad: {self.lambdas.requires_grad}")
+                print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
+                
                 with torch.cuda.amp.autocast():
                     merged_param = param.clone()
                     for i, tv in enumerate(self.list_of_task_vectors):
                         if full_name in tv.delta_dict:
-                            # 2. デルタを1つずつ処理して即解放
                             delta = tv.delta_dict[full_name].to(
                                 param.device,
                                 dtype=torch.float16,
                                 non_blocking=True
                             )
-                            merged_param.add_(self.lambdas[i] * delta)
+                            # デバッグ用：計算過程を確認
+                            weighted_delta = self.lambdas[i] * delta
+                            print(f"Task {i}: λ={self.lambdas[i].item()}, weighted_delta_norm={weighted_delta.norm().item()}")
+                            merged_param.add_(weighted_delta)
                             del delta
 
-                # 3. 計算グラフに乗せる最後の演算のみrequires_grad=True
                 module._parameters[param_name] = merged_param
 
         return pre_hook
@@ -201,15 +206,18 @@ class LayerwiseMergedModelWrapper(nn.Module):
         return post_hook
 
     def forward(self, input_ids, labels=None, **kwargs):
-        """
-        これで (base_param + Σ(lambdas * delta)) を使った forward を行う。
-        """
-        # 5. forward実行後に不要な中間表現を解放
+        # デバッグ用：forward開始時のλの状態を確認
+        print("\nForward pass start")
+        print(f"λ requires_grad: {self.lambdas.requires_grad}")
+        print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
+        
         with autocast(enabled=True, dtype=torch.float16):
             outputs = self.base_model(input_ids=input_ids, labels=labels, **kwargs)
             if hasattr(outputs, 'loss'):
                 loss = outputs.loss
-                # 必要な値以外は即解放
+                # デバッグ用：損失計算後のλの状態を確認
+                print(f"\nLoss computed: {loss.item()}")
+                print(f"Loss requires_grad: {loss.requires_grad}")
                 del outputs.logits
                 del outputs.past_key_values
                 torch.cuda.empty_cache()
@@ -441,7 +449,11 @@ class LambdaOptimizerCrossEntropy:
     @memory_monitor_decorator
     def compute_gsm8k_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         device = next(merged_model.parameters()).device
-
+        
+        # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
         prompts, answers = [], []
         for item in batch_data:
             p = f"Q: {item['question']}\nA:"
@@ -502,6 +514,11 @@ class LambdaOptimizerCrossEntropy:
     @memory_monitor_decorator
     def compute_mbpp_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         device = next(merged_model.parameters()).device
+        
+        # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
 
         prompts, codes = [], []
         for item in batch_data:
@@ -561,6 +578,11 @@ class LambdaOptimizerCrossEntropy:
     @memory_monitor_decorator
     def compute_ja_mgsm_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         device = next(merged_model.parameters()).device
+        
+        # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
 
         prompts, answers = [], []
         for item in batch_data:
@@ -651,22 +673,38 @@ class LambdaOptimizerCrossEntropy:
             self.merged_model.to(self.device)
 
             for task_name, data, tokenizer, compute_loss_fn in tasks:
+                print(f"\nProcessing task: {task_name}")
                 batches = self.make_batches(data, batch_size)
                 task_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
 
-                for batch in batches:
+                for batch_idx, batch in enumerate(batches):
+                    print(f"\nBatch {batch_idx + 1}/{len(batches)}")
                     batch_loss = compute_loss_fn(batch, tokenizer, self.merged_model)
+                    print(f"Batch loss: {batch_loss.item()}")
+                    print(f"Batch loss requires_grad: {batch_loss.requires_grad}")
                     task_loss = task_loss + batch_loss
 
+                print(f"Task {task_name} total loss: {task_loss.item()}")
                 total_loss = total_loss + task_loss
 
-            # 勾配計算
+            # 勾配計算前のλの状態
+            print("\nBefore backward:")
+            print(f"λ requires_grad: {self.lambdas.requires_grad}")
+            print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
+
             total_loss.backward()
 
-            # λの勾配確認
-            print(f"λの勾配値: {self.lambdas.grad}")
+            # 勾配計算後のλの状態
+            print("\nAfter backward:")
+            print(f"λ requires_grad: {self.lambdas.requires_grad}")
+            print(f"λ gradients: {self.lambdas.grad}")
 
             self.optimizer.step()
+            
+            # optimizer.step()後のλの状態
+            print("\nAfter optimizer step:")
+            print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
+
             if self.scheduler is not None:
                 self.scheduler.step()
 

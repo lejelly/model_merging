@@ -123,9 +123,7 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         )
         for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
             finetuned_tokenizer = AutoTokenizer.from_pretrained(
-                pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name),
-                use_fast=False,  # fast tokenizerを無効化
-                legacy=True      # レガシーモードを有効化
+                pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name)
             )
             smart_tokenizer_and_embedding_resize(
                 special_tokens_dict=dict(pad_token="[PAD]"),
@@ -544,9 +542,7 @@ if __name__ == "__main__":
     for finetuned_model_name in finetuned_model_names:
         finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.float16)
         finetuned_tokenizer = AutoTokenizer.from_pretrained(
-            pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name),
-            use_fast=False,  # fast tokenizerを無効化
-            legacy=True      # レガシーモードを有効化
+            pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name)
         )
         models_to_merge.append(finetuned_model)
         finetuned_tokenizers.append(finetuned_tokenizer)
