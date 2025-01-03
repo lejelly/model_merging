@@ -246,7 +246,7 @@ class LambdaOptimizerCrossEntropy:
         initial_lambdas: Optional[np.ndarray] = None,
         num_epochs: int = 10,
         learning_rate: float = 0.001,
-        batch_size: int = 1,
+        batch_size: int = 2,
         num_train_samples: int = 4,
         optimizer_type: str = "adam",
         scheduler_type: str = "cosine",
@@ -255,7 +255,7 @@ class LambdaOptimizerCrossEntropy:
         params_name: str = None,
         finetuned_model_names: List[str] = None,
         optimized_lambda_filepath: str = None,
-        max_length: int = 256,
+        max_length: int = 1024,
         **kwargs
     ):
         self.seed = seed

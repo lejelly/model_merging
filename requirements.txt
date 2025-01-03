@@ -12,4 +12,9 @@ matplotlib
 wandb
 optuna
 psutil
-vllm
+memory_profiler
+scipy
+seaborn
+umap
+cvxpy
+sentencepiece

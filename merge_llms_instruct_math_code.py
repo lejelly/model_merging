@@ -11,7 +11,7 @@ from model_merging_methods.task_vector import TaskVector
 from model_merging_methods.mask_weights_utils import mask_model_weights_exclusive
 from model_merging_methods.merging_methods import MergingMethod
 from utils.utils import set_random_seed, smart_tokenizer_and_embedding_resize, copy_params_to_model
-from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test_gsm8k, test_hendrycks_math, test_human_eval, test_mbpp, test_ja_mgsm
+#from inference_llms_instruct_math_code import create_llm, test_alpaca_eval, test_gsm8k, test_hendrycks_math, test_human_eval, test_mbpp, test_ja_mgsm
 from utils.load_config import cache_dir
 from utils.utils import delete_all_models, aggressive_clear_gpu_memory
 
@@ -122,6 +122,11 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
             tokenizer=pretrained_tokenizer,
         )
         for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+            finetuned_tokenizer = AutoTokenizer.from_pretrained(
+                pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name),
+                use_fast=False,  # fast tokenizerを無効化
+                legacy=True      # レガシーモードを有効化
+            )
             smart_tokenizer_and_embedding_resize(
                 special_tokens_dict=dict(pad_token="[PAD]"),
                 model=finetuned_model,
@@ -538,7 +543,11 @@ if __name__ == "__main__":
     merging_method = MergingMethod(merging_method_name=args.merging_method_name)
     for finetuned_model_name in finetuned_model_names:
         finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.float16)
-        finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name))
+        finetuned_tokenizer = AutoTokenizer.from_pretrained(
+            pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name),
+            use_fast=False,  # fast tokenizerを無効化
+            legacy=True      # レガシーモードを有効化
+        )
         models_to_merge.append(finetuned_model)
         finetuned_tokenizers.append(finetuned_tokenizer)
 
