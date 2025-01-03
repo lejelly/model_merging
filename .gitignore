@@ -161,3 +161,4 @@ env*
 cmake-3.27.7
 .cache/
 work
+Miniconda3-latest-Linux-aarch64.sh
