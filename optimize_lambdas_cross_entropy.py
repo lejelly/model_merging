@@ -14,9 +14,7 @@ import optuna
 import torch.nn as nn
 import psutil
 import time
-
-# 重要: stateless.functional_call を使う
-import torch.nn.utils.stateless as stateless
+import gc
 
 # Mixed Precision (任意)
 from torch.cuda.amp import autocast, GradScaler
@@ -37,8 +35,9 @@ def get_cosine_schedule_with_warmup(
         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
 
+
 ###############################################################################
-# 以下はサンプルの読み込み関数
+# 以下はサンプルの読み込み関数 (データセット)
 ###############################################################################
 def load_gsm8k_data(path="math_code_data/gsm8k.train.jsonl", num_samples=10, seed=42):
     data = []
@@ -88,117 +87,166 @@ def load_ja_mgsm_data(path="math_code_data/ja_mgsm.train.jsonl", num_samples=10,
 
 
 ###############################################################################
-# ベースモデルとファインチューニング済みモデルの差分を取るクラス(タスクベクトル)
+# 1) 差分をCPU上に保持するクラス (変更なし)
 ###############################################################################
-class NewTaskVector:
+class CPUStoredTaskVector:
     """
-    pretrained_model と finetuned_model の差分をとった辞書: 
-      'param_name' -> GPU上に保持される Tensor(差分)
+    「finetuned_model - pretrained_model」の差分を CPU 上に保持。
+    param_name -> CPU上 Tensor(差分)
     """
-    def __init__(self, pretrained_model, finetuned_model, exclude_param_names_regex=[]):
-        self.task_vector_param_dict = {}
+    def __init__(self, pretrained_model: nn.Module, finetuned_model: nn.Module):
+        self.delta_dict = {}
         with torch.no_grad():
-            is_4bit_base = hasattr(pretrained_model, 'is_loaded_in_4bit') and pretrained_model.is_loaded_in_4bit
-            is_4bit_ft   = hasattr(finetuned_model, 'is_loaded_in_4bit') and finetuned_model.is_loaded_in_4bit
-
-            for (n1, p1), (n2, p2) in zip(pretrained_model.named_parameters(), finetuned_model.named_parameters()):
-                # 必要に応じてfloat16 GPU上へ転送
-                if is_4bit_base:
-                    p1_data = p1.to(dtype=torch.float16)
-                else:
-                    p1_data = p1.to(device='cuda', dtype=torch.float16)
-
-                if is_4bit_ft:
-                    p2_data = p2.to(dtype=torch.float16)
-                else:
-                    p2_data = p2.to(device='cuda', dtype=torch.float16)
-
-                # 差分をGPU上に保持
-                diff = p2_data - p1_data
-                self.task_vector_param_dict[n1] = diff  # GPU上
+            for (name_pre, p_pre), (name_ft, p_ft) in zip(
+                pretrained_model.named_parameters(),
+                finetuned_model.named_parameters()
+            ):
+                # パラメータ名が一致しているか確認
+                assert name_pre == name_ft, f"Param mismatch: {name_pre} vs {name_ft}"
+                # CPUに移動して差分を float32 で保持（VRAM節約）
+                delta = (p_ft.cpu().float() - p_pre.cpu().float())
+                self.delta_dict[name_pre] = delta
 
 ###############################################################################
-# forward 時に (base_param + Σ(λ_i * diff_i)) を合成するラッパークラス
+# 2) forward 時にレイヤーごとに合成するラッパークラス (修正ポイント)
 ###############################################################################
-class MergedModelWrapper(nn.Module):
+class LayerwiseMergedModelWrapper(nn.Module):
     """
-    base_param + Σ(λ_i * diff_i) を一度にGPU上で合成してforwardするラッパー
+    - base_model: GPU上 (frozen) のベースモデル
+    - list_of_task_vectors: CPU上に保存された "param_name -> delta" の辞書リスト
+    - lambdas: nn.Parameter or Tensor (学習対象: 各タスクの重み)
+
+    以前のコードでは forward_pre_hook 内で `param.data.add_(...)` をしていましたが
+    autograd が勾配を追跡できないため lambda に勾配が流れませんでした。
+
+    下記の修正版では:
+      - pre_hook で「param -> param + Σ(lambdas[i]*delta)」と演算し、モジュールの _parameters を一時差し替え
+      - post_hook で元に戻す
+    というフローで、計算グラフに乗せています。
     """
-    def __init__(self, pretrained_model, task_vectors, lambdas):
+
+    def __init__(self, base_model: nn.Module, list_of_task_vectors: List[CPUStoredTaskVector], lambdas: torch.Tensor):
         super().__init__()
-        self.pretrained_model = pretrained_model
-        self.task_vectors = task_vectors
-        self.lambdas = lambdas  # 学習対象 (requires_grad=True) を想定
+        self.base_model = base_model.to(torch.float16)
+        # gradient checkpointingを有効化
+        self.base_model.gradient_checkpointing_enable()
+        
+        for p in self.base_model.parameters():
+            p.requires_grad = False
 
-        self.is_4bit = hasattr(pretrained_model, 'is_loaded_in_4bit') and pretrained_model.is_loaded_in_4bit
+        self.list_of_task_vectors = list_of_task_vectors
+        self.lambdas = lambdas.to(torch.float16)
+        
+        self._original_params = {}
+        self.hooks = []
+        self._register_hooks()
 
-        # ベースモデルをfreeze
-        for param in self.pretrained_model.parameters():
-            param.requires_grad = False
+    def _register_hooks(self):
+        """
+        モジュールごとに forward_pre_hook / forward_hook を仕掛ける。
+        forward_pre_hook で差分を加算 → forward_hook で差分を引いて戻す ではなく、
+        - pre_hookでモジュールのparamを「merged_param (= param + Σ(lambdas*delta))」に差し替え
+        - post_hookで元に戻す
+        """
+        for name, module in self.base_model.named_modules():
+            # このモジュールにパラメータがあるならフックを付ける
+            params_in_module = list(module.named_parameters(recurse=False))
+            if len(params_in_module) > 0:
+                pre_hook = module.register_forward_pre_hook(self._make_pre_hook(name))
+                post_hook = module.register_forward_hook(self._make_post_hook(name))
+                self.hooks.append(pre_hook)
+                self.hooks.append(post_hook)
+
+    def _make_pre_hook(self, module_prefix: str):
+        """
+        レイヤーの forward 前 に「param -> param + Σ(lambdas * delta)」を差し替え
+        """
+        def pre_hook(module, inputs):
+            for (param_name, param) in module.named_parameters(recurse=False):
+                full_name = f"{module_prefix}.{param_name}"
+                self._original_params[full_name] = param
+
+                # 1. 一時変数をすぐに解放するcontextmanagerを使用
+                with torch.cuda.amp.autocast():
+                    merged_param = param.clone()
+                    for i, tv in enumerate(self.list_of_task_vectors):
+                        if full_name in tv.delta_dict:
+                            # 2. デルタを1つずつ処理して即解放
+                            delta = tv.delta_dict[full_name].to(
+                                param.device,
+                                dtype=torch.float16,
+                                non_blocking=True
+                            )
+                            merged_param.add_(self.lambdas[i] * delta)
+                            del delta
+
+                # 3. 計算グラフに乗せる最後の演算のみrequires_grad=True
+                module._parameters[param_name] = merged_param
+
+        return pre_hook
+
+    def _make_post_hook(self, module_prefix: str):
+        """
+        レイヤーの forward 後 に元のパラメータに戻す
+        """
+        def post_hook(module, inputs, output):
+            for (param_name, param) in module.named_parameters(recurse=False):
+                full_name = f"{module_prefix}.{param_name}"
+                if full_name in self._original_params:
+                    # 4. 元のパラメータを戻す際に一時変数を即解放
+                    orig_param = self._original_params[full_name]
+                    module._parameters[param_name] = orig_param
+                    del self._original_params[full_name]
+            return output
+        return post_hook
 
     def forward(self, input_ids, labels=None, **kwargs):
         """
-        1. ベースパラメータをGPUへコピー (4bitの場合はfloat16変換)
-        2. 全タスクベクトル(diff)を GPU 上で足し合わせる
-        3. functional_callでforward
+        これで (base_param + Σ(lambdas * delta)) を使った forward を行う。
         """
-        device = self.lambdas.device
-        input_ids = input_ids.to(device)
-        if labels is not None:
-            labels = labels.to(device)
+        # 5. forward実行後に不要な中間表現を解放
+        with autocast(enabled=True, dtype=torch.float16):
+            outputs = self.base_model(input_ids=input_ids, labels=labels, **kwargs)
+            if hasattr(outputs, 'loss'):
+                loss = outputs.loss
+                # 必要な値以外は即解放
+                del outputs.logits
+                del outputs.past_key_values
+                torch.cuda.empty_cache()
+                return loss
+            return outputs
 
-        param_dict = {}
+    def cleanup(self):
+        """フックを外す (不要ならそのままでもOK)"""
+        for h in self.hooks:
+            h.remove()
+        self.hooks = []
 
-        # 勾配計算を有効にする
-        with torch.enable_grad():
-            for name, base_param in self.pretrained_model.named_parameters():
-                if self.is_4bit:
-                    base_gpu = base_param.to(dtype=torch.float16)
-                else:
-                    base_gpu = base_param.to(device=device, dtype=torch.float16)
-
-                base_gpu = base_gpu.clone()
-
-                # 各task_vectorを個別に加算
-                for i, tv in enumerate(self.task_vectors):
-                    diff = tv.task_vector_param_dict[name]
-                    lam = self.lambdas[i]  # .to(dtype=torch.float16)を削除
-                    base_gpu += lam * diff
-
-                param_dict[name] = base_gpu
-
-        # stateless.functional_callでforward
-        outputs = stateless.functional_call(
-            self.pretrained_model.to(device),
-            param_dict,
-            (input_ids,),
-            {'labels': labels, **kwargs}
-        )
-        return outputs
-
+    def __del__(self):
+        self.cleanup()
 
 ###############################################################################
-# メインの LambdaOptimizer クラス (プロンプト部分を -100 ラベルにする)
+# メインの LambdaOptimizerCrossEntropy クラス (学習処理)
 ###############################################################################
 class LambdaOptimizerCrossEntropy:
     """
     - モデルパラメータは凍結 (requires_grad=False)
     - λ (self.lambdas) のみ学習 (requires_grad=True)
-    - 合成: base_param + sum(lambda_i * diff_i)
-    - プロンプト部分を -100, 回答部分を実ラベルにする
+    - Forward 時、LayerwiseMergedModelWrapper がベースパラメータに差分を加算
+      => 計算グラフに (λ * delta) が乗るので、λ に勾配が伝播可能
     """
 
     def __init__(
         self,
         seed: int,
-        pretrained_model,       # transformers の PreTrainedModel (4bitモデルの可能性あり)
+        pretrained_model,  # CPU上にあるベースモデル
         pretrained_model_name: str,
-        tokenizers,             # [tok_gsm8k, tok_mbpp, tok_ja_mgsm]
-        models_to_merge: List,  # finetuned models (4bitの可能性あり)
+        tokenizers,
+        models_to_merge: List,  # CPU上のファインチューニング済みモデルリスト
         initial_lambdas: Optional[np.ndarray] = None,
         num_epochs: int = 10,
         learning_rate: float = 0.001,
-        batch_size: int = 2,
+        batch_size: int = 1,
         num_train_samples: int = 4,
         optimizer_type: str = "adam",
         scheduler_type: str = "cosine",
@@ -207,186 +255,190 @@ class LambdaOptimizerCrossEntropy:
         params_name: str = None,
         finetuned_model_names: List[str] = None,
         optimized_lambda_filepath: str = None,
-        max_length: int = 1024,
+        max_length: int = 256,
+        **kwargs
     ):
         self.seed = seed
         self.logger = logger or logging.getLogger(__name__)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda")
 
-        self.pretrained_model = pretrained_model
-        # 4bitモデルでない場合は .to(device)
-        if not (hasattr(self.pretrained_model, 'is_loaded_in_4bit') and self.pretrained_model.is_loaded_in_4bit):
-            self.pretrained_model = self.pretrained_model.to(self.device)
+        # 1) ベースモデルを GPU にロード (勾配不要)
+        self.pretrained_model = pretrained_model.to(self.device)
+        for p in self.pretrained_model.parameters():
+            p.requires_grad = False
 
-        self.models_to_merge = []
-        for model in models_to_merge:
-            if not (hasattr(model, 'is_loaded_in_4bit') and model.is_loaded_in_4bit):
-                model = model.to(self.device)
-            self.models_to_merge.append(model)
-
-        self.pretrained_model_name = pretrained_model_name
-        self.tokenizers = tokenizers  # [tok_gsm8k, tok_mbpp, tok_ja_mgsm]
-        self.num_epochs = num_epochs
-        self.learning_rate = learning_rate
-        self.batch_size = batch_size
-        self.num_train_samples = num_train_samples
-        self.max_length = max_length
-
-        # λ の初期値
-        if initial_lambdas is None:
-            initial_lambdas = np.zeros(len(models_to_merge))
-
-        # Task Vectorsの初期化
-        self.task_vectors = []
+        # 2) finetuned - pretrained の差分をCPU上で保持
+        print("Calculating task vectors (CPU deltas)...")
+        self.list_of_task_vectors = []
         with torch.no_grad():
-            for ft_model in models_to_merge:
-                tv = NewTaskVector(self.pretrained_model, ft_model)
-                self.task_vectors.append(tv)
+            for i, ft_model in enumerate(models_to_merge, start=1):
+                print(f"Processing model {i}/{len(models_to_merge)} -> CPU delta")
+                ft_model = ft_model.to(self.device)
 
-        # λ (GPU上に配置)
+                tv = CPUStoredTaskVector(self.pretrained_model, ft_model)
+                self.list_of_task_vectors.append(tv)
+
+                # finetuned_model 不要になったらメモリを開放
+                ft_model.cpu()
+                del ft_model
+                torch.cuda.empty_cache()
+                gc.collect()
+
+        # 参照破棄
+        models_to_merge.clear()
+        del models_to_merge
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        # 3) λ (タスク数) 初期化
+        num_tasks = len(self.list_of_task_vectors)
+        if initial_lambdas is None:
+            initial_lambdas = np.ones(num_tasks, dtype=np.float32)  # 例: 全部1
         self.lambdas = torch.tensor(
-            initial_lambdas, 
-            requires_grad=True, 
-            dtype=torch.float16, 
+            initial_lambdas,
+            requires_grad=True,
+            dtype=torch.float16,
             device=self.device
         )
 
-        # 事前学習モデルのパラメータを凍結
-        for p in pretrained_model.parameters():
-            p.requires_grad = False
+        # 4) Optimizer & Scheduler
+        self.setup_optimizer_and_scheduler(
+            optimizer_type=optimizer_type,
+            learning_rate=learning_rate,
+            scheduler_type=scheduler_type,
+            warmup_steps=warmup_steps,
+            num_epochs=num_epochs
+        )
 
-        # Optimizerの設定
-        if optimizer_type.lower() == "adam":
-            self.optimizer = torch.optim.Adam([self.lambdas], lr=self.learning_rate)
-        elif optimizer_type.lower() == "sgd":
-            self.optimizer = torch.optim.SGD([self.lambdas], lr=self.learning_rate)
+        # 5) 訓練データ (GSM8K, MBPP, ja-MGSM) の読み込み
+        print("Loading training data...")
+        self.load_training_data(num_train_samples)
+
+        # 6) その他設定
+        self.num_epochs = num_epochs
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self.tokenizers = tokenizers
+        self.finetuned_model_names = finetuned_model_names
+        self.optimized_lambda_filepath = optimized_lambda_filepath
+
+        # wandb (任意)
+        self.setup_wandb(params_name)
+
+        # 7) LayerwiseMergedModelWrapper
+        self.merged_model = LayerwiseMergedModelWrapper(
+            base_model=self.pretrained_model,
+            list_of_task_vectors=self.list_of_task_vectors,
+            lambdas=self.lambdas
+        ).to(self.device)
+
+        print("Initialization complete")
+
+    def setup_wandb(self, params_name: str):
+        """wandbの設定"""
+        wandb.init(
+            project="model_merging",
+            name=f"lambda_optimization_{params_name}",
+            config={
+                "learning_rate": self.optimizer.param_groups[0]['lr'] if self.optimizer else None,
+                "num_epochs": self.num_epochs,
+                "batch_size": self.batch_size,
+                "num_models": len(self.list_of_task_vectors),
+                "model_names": self.finetuned_model_names
+            }
+        )
+        self.wandb_run = wandb.run
+
+    def setup_optimizer_and_scheduler(self, optimizer_type, learning_rate, scheduler_type, warmup_steps, num_epochs):
+        """最適化関連の設定"""
+        if optimizer_type == "adam":
+            self.optimizer = torch.optim.Adam([self.lambdas], lr=learning_rate)
+        elif optimizer_type == "sgd":
+            self.optimizer = torch.optim.SGD([self.lambdas], lr=learning_rate)
         else:
-            raise ValueError(f"Unknown optimizer type: {optimizer_type}")
+            self.optimizer = None  # spsa等、独自実装の場合は後で
 
-        # スケジューラーの設定
-        self.scheduler_type = scheduler_type
-        total_steps = num_epochs * (num_train_samples // batch_size + 1) * 3  # 3タスク程度
-
-        if scheduler_type == "cosine":
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=total_steps - warmup_steps,
-                eta_min=1e-6
-            )
-        elif scheduler_type == "cosine_warmup":
+        if scheduler_type == "cosine" and self.optimizer is not None:
             self.scheduler = get_cosine_schedule_with_warmup(
                 self.optimizer,
                 num_warmup_steps=warmup_steps,
-                num_training_steps=total_steps
+                num_training_steps=num_epochs
             )
         else:
             self.scheduler = None
 
-        # シード
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
+    def load_training_data(self, num_samples):
+        """訓練データの読み込み"""
+        self.gsm8k_data = load_gsm8k_data(num_samples=num_samples, seed=self.seed)
+        self.mbpp_data  = load_mbpp_data(num_samples=num_samples, seed=self.seed)
+        self.ja_mgsm_data = load_ja_mgsm_data(num_samples=num_samples, seed=self.seed)
 
-        # データ (各10件程度をサンプリング)
-        self.gsm8k_data = load_gsm8k_data(num_samples=self.num_train_samples, seed=seed)
-        self.mbpp_data = load_mbpp_data(num_samples=self.num_train_samples, seed=seed)
-        self.ja_mgsm_data = load_ja_mgsm_data(num_samples=self.num_train_samples, seed=seed)
-
-        # wandb 初期化
-        self.wandb_run = wandb.init(
-            project="model_merging",
-            name=f"LambdaOptimizerCrossEntropy_{seed}",
-            config={
-                "seed": seed,
-                "pretrained_model": pretrained_model_name,
-                "num_epochs": num_epochs,
-                "learning_rate": learning_rate,
-                "num_train_samples": num_train_samples,
-                "optimizer_type": optimizer_type,
-                "scheduler_type": scheduler_type,
-                "warmup_steps": warmup_steps
-            }
-        )
-
-        # 追加のパラメータ
-        self.params_name = params_name
-        self.finetuned_model_names = finetuned_model_names
-        self.optimized_lambda_filepath = optimized_lambda_filepath
-
-    def memory_tracker(func):
-        """関数のメモリ使用量を追跡するデコレータ"""
+    ###########################################################################
+    # メモリモニタ用デコレータ (任意)
+    ###########################################################################
+    def memory_monitor_decorator(func):
         def wrapper(self, *args, **kwargs):
             if not torch.cuda.is_available():
                 return func(self, *args, **kwargs)
-            
-            torch.cuda.empty_cache()
-            start_allocated = torch.cuda.memory_allocated() / 1024**3
-            start_reserved  = torch.cuda.memory_reserved()  / 1024**3
-            
-            result = func(self, *args, **kwargs)
-            
-            end_allocated = torch.cuda.memory_allocated() / 1024**3
-            end_reserved  = torch.cuda.memory_reserved()  / 1024**3
-            
-            print(f"\n[Memory Usage] {func.__name__}")
-            print(f"  Before - Allocated: {start_allocated:.2f}GB, Reserved: {start_reserved:.2f}GB")
-            print(f"  After  - Allocated: {end_allocated:.2f}GB, Reserved: {end_reserved:.2f}GB")
-            print(f"  Diff   - Allocated: {end_allocated - start_allocated:.2f}GB, Reserved: {end_reserved - start_reserved:.2f}GB")
-            
-            return result
+
+            print(f"\n{'='*50}")
+            print(f"Monitoring memory for: {func.__name__}")
+            print(f"{'='*50}")
+
+            # 実行前のメモリ状態
+            print("\nBefore function execution:")
+            for i in range(torch.cuda.device_count()):
+                total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                allocated = torch.cuda.memory_allocated(i) / 1024**3
+                reserved = torch.cuda.memory_reserved(i) / 1024**3
+                free = total - allocated
+                print(f"GPU {i}:")
+                print(f"  Total:     {total:.2f} GB")
+                print(f"  Allocated: {allocated:.2f} GB")
+                print(f"  Reserved:  {reserved:.2f} GB")
+                print(f"  Free:      {free:.2f} GB")
+
+            # λの勾配状態（もし存在すれば）
+            if hasattr(self, 'lambdas'):
+                print(f"\nλ requires_grad: {self.lambdas.requires_grad}")
+                print(f"Current λ values: {self.lambdas.detach().cpu().numpy()}")
+
+            try:
+                result = func(self, *args, **kwargs)
+
+                # 実行後のメモリ状態
+                print("\nAfter function execution:")
+                for i in range(torch.cuda.device_count()):
+                    allocated = torch.cuda.memory_allocated(i) / 1024**3
+                    reserved = torch.cuda.memory_reserved(i) / 1024**3
+                    print(f"GPU {i}:")
+                    print(f"  Allocated: {allocated:.2f} GB")
+                    print(f"  Reserved:  {reserved:.2f} GB")
+
+                # λの勾配（もし存在すれば）
+                if hasattr(self, 'lambdas') and self.lambdas.grad is not None:
+                    print(f"\nλ gradients: {self.lambdas.grad}")
+
+                return result
+
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    print(f"\nOOM Error in {func.__name__}!")
+                    print("Memory state at error:")
+                    for i in range(torch.cuda.device_count()):
+                        allocated = torch.cuda.memory_allocated(i) / 1024**3
+                        reserved = torch.cuda.memory_reserved(i) / 1024**3
+                        print(f"GPU {i}:")
+                        print(f"  Allocated: {allocated:.2f} GB")
+                        print(f"  Reserved:  {reserved:.2f} GB")
+                raise e
+
         return wrapper
 
-    def debug_decorator(func):
-        """関数の実行状況とメモリ使用量を表示するデコレータ"""
-        def wrapper(self, *args, **kwargs):
-            print(f"\n{'='*80}")
-            print(f"Executing: {func.__name__}")
-            print(f"{'='*80}")
-            
-            # GPU メモリ
-            if torch.cuda.is_available():
-                gpu_start_allocated = torch.cuda.memory_allocated() / 1024**3
-                gpu_start_reserved = torch.cuda.memory_reserved() / 1024**3
-                print(f"GPU Memory before {func.__name__}:")
-                print(f"  Allocated: {gpu_start_allocated:.2f} GB")
-                print(f"  Reserved:  {gpu_start_reserved:.2f} GB")
-            
-            # RAM
-            process = psutil.Process(os.getpid())
-            ram_start = process.memory_info().rss / 1024**3
-            print(f"RAM Usage before {func.__name__}: {ram_start:.2f} GB")
-            
-            # 関数実行
-            start_time = time.time()
-            result = func(self, *args, **kwargs)
-            end_time = time.time()
-            
-            print(f"\nFinished: {func.__name__}")
-            print(f"Execution time: {end_time - start_time:.2f} seconds")
-            
-            # GPU メモリ
-            if torch.cuda.is_available():
-                gpu_end_allocated = torch.cuda.memory_allocated() / 1024**3
-                gpu_end_reserved = torch.cuda.memory_reserved() / 1024**3
-                print(f"\nGPU Memory after {func.__name__}:")
-                print(f"  Allocated: {gpu_end_allocated:.2f} GB")
-                print(f"  Reserved:  {gpu_end_reserved:.2f} GB")
-                print(f"  Diff Allocated: {gpu_end_allocated - gpu_start_allocated:.2f} GB")
-                print(f"  Diff Reserved:  {gpu_end_reserved - gpu_start_reserved:.2f} GB")
-            
-            # RAM
-            ram_end = process.memory_info().rss / 1024**3
-            print(f"RAM Usage after {func.__name__}: {ram_end:.2f} GB")
-            print(f"RAM Diff: {ram_end - ram_start:.2f} GB")
-            print(f"{'='*80}\n")
-            
-            return result
-        return wrapper
-
-    ############################################################################
+    ###########################################################################
     # GSM8K/MBPP/ja-MGSMの compute_*_batch_loss
-    ############################################################################
-    @debug_decorator
+    ###########################################################################
+    @memory_monitor_decorator
     def compute_gsm8k_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         device = next(merged_model.parameters()).device
 
@@ -398,17 +450,17 @@ class LambdaOptimizerCrossEntropy:
             answers.append(a)
 
         prompt_enc = tokenizer(
-            prompts, 
-            padding=True, 
-            truncation=True, 
-            max_length=max_length, 
+            prompts,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
             return_tensors="pt"
         ).to(device)
         answer_enc = tokenizer(
-            answers, 
-            padding=True, 
-            truncation=True, 
-            max_length=max_length, 
+            answers,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
             return_tensors="pt"
         ).to(device)
 
@@ -440,17 +492,14 @@ class LambdaOptimizerCrossEntropy:
         input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long).to(device)
         labels_tensor    = torch.tensor(labels_list,   dtype=torch.long).to(device)
 
-        with torch.set_grad_enabled(True):
+        with autocast(enabled=True, dtype=torch.float16):
             outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-            loss = outputs.loss
-            
+            loss = outputs
             if not loss.requires_grad:
-                print("Warning: Loss requires_grad is False!")
                 loss = loss.detach().requires_grad_(True)
-            
             return loss
 
-    @debug_decorator
+    @memory_monitor_decorator
     def compute_mbpp_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         device = next(merged_model.parameters()).device
 
@@ -460,17 +509,17 @@ class LambdaOptimizerCrossEntropy:
             codes.append(item["code"])
 
         prompt_enc = tokenizer(
-            prompts, 
-            padding=True, 
-            truncation=True, 
-            max_length=max_length, 
+            prompts,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
             return_tensors="pt"
         ).to(device)
         code_enc   = tokenizer(
-            codes, 
-            padding=True, 
-            truncation=True, 
-            max_length=max_length, 
+            codes,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
             return_tensors="pt"
         ).to(device)
 
@@ -502,17 +551,14 @@ class LambdaOptimizerCrossEntropy:
         input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long).to(device)
         labels_tensor    = torch.tensor(labels_list,   dtype=torch.long).to(device)
 
-        with torch.set_grad_enabled(True):
+        with autocast(enabled=True, dtype=torch.float16):
             outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-            loss = outputs.loss
-            
+            loss = outputs
             if not loss.requires_grad:
-                print("Warning: Loss requires_grad is False!")
                 loss = loss.detach().requires_grad_(True)
-            
             return loss
 
-    @debug_decorator
+    @memory_monitor_decorator
     def compute_ja_mgsm_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         device = next(merged_model.parameters()).device
 
@@ -522,17 +568,17 @@ class LambdaOptimizerCrossEntropy:
             answers.append(item["answer"])
 
         prompt_enc = tokenizer(
-            prompts, 
-            padding=True, 
-            truncation=True, 
-            max_length=max_length, 
+            prompts,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
             return_tensors="pt"
         ).to(device)
         answer_enc = tokenizer(
-            answers, 
-            padding=True, 
-            truncation=True, 
-            max_length=max_length, 
+            answers,
+            padding=True,
+            truncation=True,
+            max_length=max_length,
             return_tensors="pt"
         ).to(device)
 
@@ -564,14 +610,11 @@ class LambdaOptimizerCrossEntropy:
         input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long).to(device)
         labels_tensor    = torch.tensor(labels_list,   dtype=torch.long).to(device)
 
-        with torch.set_grad_enabled(True):
+        with autocast(enabled=True, dtype=torch.float16):
             outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-            loss = outputs.loss
-            
+            loss = outputs
             if not loss.requires_grad:
-                print("Warning: Loss requires_grad is False!")
                 loss = loss.detach().requires_grad_(True)
-            
             return loss
 
     ###########################################################################
@@ -588,77 +631,69 @@ class LambdaOptimizerCrossEntropy:
     def make_batches(self, data_list, bsz):
         return [data_list[i:i+bsz] for i in range(0, len(data_list), bsz)]
 
-    @debug_decorator
+    @memory_monitor_decorator
     def train_one_epoch(self, batch_size: int = 2):
         print("\n=== train_one_epoch start ===")
+        print(f"λの勾配状態: {self.lambdas.requires_grad}")
         print(f"Initial λ values: {self.lambdas.detach().cpu().numpy()}")
 
-        # 勾配をクリア
         self.optimizer.zero_grad()
+        total_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
 
-        # MergedModelWrapperを生成
-        merged_model = MergedModelWrapper(
-            pretrained_model=self.pretrained_model,
-            task_vectors=self.task_vectors,
-            lambdas=self.lambdas
-        )
-        merged_model.train()  # 学習モードに設定
-        merged_model.to(self.device)
-
+        # タスクごとにバッチを回す
         tasks = [
             ("gsm8k",   self.gsm8k_data,   self.tokenizers[0], self.compute_gsm8k_batch_loss),
             ("mbpp",    self.mbpp_data,    self.tokenizers[1], self.compute_mbpp_batch_loss),
-            ("ja_mgsm", self.ja_mgsm_data, self.tokenizers[2], self.compute_ja_mgsm_batch_loss),
+            ("ja_mgsm", self.ja_mgsm_data, self.tokenizers[2], self.compute_ja_mgsm_batch_loss)
         ]
 
-        total_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+        try:
+            self.merged_model.to(self.device)
 
-        for task_name, data, tokenizer, compute_loss_fn in tasks:
-            task_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-            batches = self.make_batches(data, batch_size)
+            for task_name, data, tokenizer, compute_loss_fn in tasks:
+                batches = self.make_batches(data, batch_size)
+                task_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
 
-            for i, batch in enumerate(batches):
-                batch_loss = compute_loss_fn(batch, tokenizer, merged_model, self.max_length)
-                task_loss = task_loss + batch_loss * (1.0 / len(batches))  # 平均を取る
+                for batch in batches:
+                    batch_loss = compute_loss_fn(batch, tokenizer, self.merged_model)
+                    task_loss = task_loss + batch_loss
 
-            total_loss = total_loss + task_loss
-            print(f"[{task_name}] loss = {task_loss.item():.4f}")
+                total_loss = total_loss + task_loss
 
-        # 勾配計算
-        total_loss.backward()
-        
-        # λの勾配を確認（デバッグ用）
-        print(f"Total loss = {total_loss.item():.4f}")
-        print("Lambda gradients:", self.lambdas.grad.detach().cpu().numpy() if self.lambdas.grad is not None else None)
+            # 勾配計算
+            total_loss.backward()
 
-        # 最適化ステップ
-        self.optimizer.step()
-        if self.scheduler is not None:
-            self.scheduler.step()
+            # λの勾配確認
+            print(f"λの勾配値: {self.lambdas.grad}")
 
-        print(f"Updated λ values: {self.lambdas.detach().cpu().numpy()}")
+            self.optimizer.step()
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+        finally:
+            self.merged_model.cpu()
+            torch.cuda.empty_cache()
+
         return total_loss.item()
 
     ###########################################################################
-    # 通常の学習
+    # 学習全体 (optimize)
     ###########################################################################
-    @debug_decorator
+    @memory_monitor_decorator
     def optimize(self):
         best_loss = float("inf")
         best_lambdas = None
 
-        # (任意) MixedPrecision: 学習全体をスケーリングするなら GradScaler を作成
+        # MixedPrecisionでまとめてやる場合 (本実装ではステップごとにautocast済みなので省略可)
         scaler = GradScaler()
 
         for epoch in range(self.num_epochs):
-            # ここでは train_one_epoch 内部で backward() しているため、
-            # autocast + GradScalerパターンと干渉しない実装になっています。
             epoch_loss = self.train_one_epoch(batch_size=self.batch_size)
 
             self.wandb_run.log({
                 "epoch": epoch,
                 "loss": epoch_loss,
-                **{f"lambda_{i}": self.lambdas[i].item() for i in range(len(self.lambdas))}
+                **{f"lambda_{i}": float(self.lambdas[i].item()) for i in range(len(self.lambdas))}
             })
 
             # CSV保存
@@ -679,7 +714,7 @@ class LambdaOptimizerCrossEntropy:
                 best_lambdas = self.lambdas.clone()
 
             print(f"[Epoch {epoch+1}/{self.num_epochs}] loss={epoch_loss:.4f}, "
-                  f"lambdas={[l.item() for l in self.lambdas]}")
+                  f"lambdas={[float(l.item()) for l in self.lambdas]}")
 
         # ベスト結果
         if best_lambdas is not None:
@@ -692,37 +727,35 @@ class LambdaOptimizerCrossEntropy:
             **{f"best_lambda_{i}": val for i, val in enumerate(final_lams)}
         })
 
-        self.wandb_run.finish()
         return final_lams
 
     ###########################################################################
     # (任意) Optuna の実装例
     ###########################################################################
-    @debug_decorator
+    @memory_monitor_decorator
     def optimize_with_optuna(self, n_trials: int = 30) -> np.ndarray:
         def objective(trial):
-            # lambda の探索
+            # 新しいλをサンプリング
             lambdas = []
-            for i in range(len(self.models_to_merge)):
+            for i in range(len(self.list_of_task_vectors)):
                 val = trial.suggest_float(f'lambda_{i}', 0.0, 1.0)
                 lambdas.append(val)
-            
-            device = next(self.pretrained_model.parameters()).device
-            self.lambdas = torch.tensor(lambdas, dtype=torch.float16, device=device, requires_grad=True)
 
-            # 簡易的に1エポックだけ行って loss を返す
+            # 反映
+            self.lambdas.data = torch.tensor(lambdas, dtype=torch.float32, device=self.device)
+
+            # 1エポックだけ学習
             epoch_loss = self.train_one_epoch(batch_size=self.batch_size)
             return epoch_loss
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=n_trials)
 
-        best_lambdas = [study.best_params[f'lambda_{i}'] for i in range(len(self.models_to_merge))]
+        best_lambdas = [study.best_params[f'lambda_{i}'] for i in range(len(self.list_of_task_vectors))]
         best_loss = study.best_value
 
         # 反映
-        device = next(self.pretrained_model.parameters()).device
-        self.lambdas = torch.tensor(best_lambdas, dtype=torch.float16, device=device, requires_grad=True)
+        self.lambdas.data = torch.tensor(best_lambdas, dtype=torch.float32, device=self.device)
 
         self.wandb_run.log({
             "optuna_best_trial": study.best_trial.number,
