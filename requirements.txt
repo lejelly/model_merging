@@ -18,3 +18,4 @@ seaborn
 umap
 cvxpy
 sentencepiece
+huggingface_hub

@@ -15,6 +15,8 @@ import torch.nn as nn
 import psutil
 import time
 import gc
+from tqdm import tqdm
+from torch.nn.utils import stateless
 
 # Mixed Precision (任意)
 from torch.cuda.amp import autocast, GradScaler
@@ -87,151 +89,115 @@ def load_ja_mgsm_data(path="math_code_data/ja_mgsm.train.jsonl", num_samples=10,
 
 
 ###############################################################################
-# 1) 差分をCPU上に保持するクラス (変更なし)
+# 1) 差分をGPU上に保持するクラス (変更なし)
 ###############################################################################
-class CPUStoredTaskVector:
-    """
-    「finetuned_model - pretrained_model」の差分を CPU 上に保持。
-    param_name -> CPU上 Tensor(差分)
-    """
+class FastTaskVector:
     def __init__(self, pretrained_model: nn.Module, finetuned_model: nn.Module):
         self.delta_dict = {}
+        
         with torch.no_grad():
-            for (name_pre, p_pre), (name_ft, p_ft) in zip(
-                pretrained_model.named_parameters(),
-                finetuned_model.named_parameters()
+            # 両方のモデルをCPUに移動
+            pretrained_model = pretrained_model
+            finetuned_model = finetuned_model
+            
+            # 全パラメータに対して一度に差分を計算
+            for (name_pre, p_pre), (name_ft, p_ft) in tqdm(
+                zip(pretrained_model.named_parameters(), finetuned_model.named_parameters()),
+                desc="Calculating parameter deltas"
             ):
-                # パラメータ名が一致しているか確認
-                assert name_pre == name_ft, f"Param mismatch: {name_pre} vs {name_ft}"
-                # CPUに移動して差分を float32 で保持（VRAM節約）
-                delta = (p_ft.cpu().float() - p_pre.cpu().float())
-                self.delta_dict[name_pre] = delta
+                assert name_pre == name_ft
+                # CPU上で差分を計算してhalf精度に変換
+                self.delta_dict[name_pre] = (p_ft - p_pre).half()
+            
 
 ###############################################################################
 # 2) forward 時にレイヤーごとに合成するラッパークラス (修正ポイント)
 ###############################################################################
 class LayerwiseMergedModelWrapper(nn.Module):
     """
-    - base_model: GPU上 (frozen) のベースモデル
-    - list_of_task_vectors: CPU上に保存された "param_name -> delta" の辞書リスト
-    - lambdas: nn.Parameter or Tensor (学習対象: 各タスクの重み)
-
-    以前のコードでは forward_pre_hook 内で `param.data.add_(...)` をしていましたが
-    autograd が勾配を追跡できないため lambda に勾配が流れませんでした。
-
-    下記の修正版では:
-      - pre_hook で「param -> param + Σ(lambdas[i]*delta)」と演算し、モジュールの _parameters を一時差し替え
-      - post_hook で元に戻す
-    というフローで、計算グラフに乗せています。
+    - merge() で「base_param + λ*delta」を一度だけ計算し、self.merged_params に保持
+    - forward() は、self.merged_params を使って functional_call するだけ
+    - これにより forward() 呼び出しごとに合成処理を繰り返す必要がなくなる
     """
 
-    def __init__(self, base_model: nn.Module, list_of_task_vectors: List[CPUStoredTaskVector], lambdas: torch.Tensor):
+    def __init__(
+        self,
+        base_model: nn.Module,
+        list_of_task_vectors: List[FastTaskVector],
+        lambdas: torch.Tensor
+    ):
         super().__init__()
-        self.base_model = base_model.to(torch.float16)
-        # gradient checkpointingを有効化
-        self.base_model.gradient_checkpointing_enable()
+        self.device = torch.device("cuda")
+        self.base_model = base_model
+        self.task_vectors = list_of_task_vectors
+        self.lambdas = lambdas.to(torch.float16).to(self.device)  # requires_grad=True
         
-        for p in self.base_model.parameters():
-            p.requires_grad = False
 
-        self.list_of_task_vectors = list_of_task_vectors
-        self.lambdas = lambdas.to(torch.float16)
-        
-        self._original_params = {}
-        self.hooks = []
-        self._register_hooks()
+        # もしまだ base_model がGPU/FP16でない場合はここで変換
+        for param in self.base_model.parameters():
+            param.to(self.device).half()
+            param.requires_grad = False  # 凍結
 
-    def _register_hooks(self):
+        # FastTaskVectorのdeltaもGPU/FP16化（必要なら）
+        for tv in self.task_vectors:
+            for k in tv.delta_dict:
+                tv.delta_dict[k] = tv.delta_dict[k].to(self.device).half()
+
+        # この辞書に "合成後パラメータ" をキャッシュする
+        self.merged_params = None
+
+    def merge(self):
         """
-        モジュールごとに forward_pre_hook / forward_hook を仕掛ける。
-        forward_pre_hook で差分を加算 → forward_hook で差分を引いて戻す ではなく、
-        - pre_hookでモジュールのparamを「merged_param (= param + Σ(lambdas*delta))」に差し替え
-        - post_hookで元に戻す
+        現在のλ (self.lambdas) を用いて
+        base_param + Σ_i (lambda_i * delta_i)
+        を一回だけ計算し、self.merged_params に保持する。
         """
-        for name, module in self.base_model.named_modules():
-            # このモジュールにパラメータがあるならフックを付ける
-            params_in_module = list(module.named_parameters(recurse=False))
-            if len(params_in_module) > 0:
-                pre_hook = module.register_forward_pre_hook(self._make_pre_hook(name))
-                post_hook = module.register_forward_hook(self._make_post_hook(name))
-                self.hooks.append(pre_hook)
-                self.hooks.append(post_hook)
+        merged_params = {}
+        for (name, base_param) in self.base_model.named_parameters():
+            # base_paramを明示的にGPUに移動
+            base_param = base_param.to(self.device)
+            
+            total_delta = None
+            for i, tv in enumerate(self.task_vectors):
+                if name in tv.delta_dict:
+                    # deltaも明示的にGPUに移動
+                    delta_i = tv.delta_dict[name].to(self.device)
+                    # lambda_i * delta_i は計算グラフ上で λ の勾配が生まれる
+                    scaled = self.lambdas[i] * delta_i
+                    if total_delta is None:
+                        total_delta = scaled
+                    else:
+                        total_delta = total_delta + scaled
 
-    def _make_pre_hook(self, module_prefix: str):
-        """
-        レイヤーの forward 前 に「param -> param + Σ(lambdas * delta)」を差し替え
-        """
-        def pre_hook(module, inputs):
-            for (param_name, param) in module.named_parameters(recurse=False):
-                full_name = f"{module_prefix}.{param_name}"
-                self._original_params[full_name] = param
+            if total_delta is None:
+                # 差分がなければbase_paramのまま
+                merged_params[name] = base_param
+            else:
+                merged_params[name] = base_param + total_delta
 
-                # デバッグ用：λの勾配状態を確認
-                print(f"\nPre-hook for {full_name}")
-                print(f"λ requires_grad: {self.lambdas.requires_grad}")
-                print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
-                
-                with torch.cuda.amp.autocast():
-                    merged_param = param.clone()
-                    for i, tv in enumerate(self.list_of_task_vectors):
-                        if full_name in tv.delta_dict:
-                            delta = tv.delta_dict[full_name].to(
-                                param.device,
-                                dtype=torch.float16,
-                                non_blocking=True
-                            )
-                            # デバッグ用：計算過程を確認
-                            weighted_delta = self.lambdas[i] * delta
-                            print(f"Task {i}: λ={self.lambdas[i].item()}, weighted_delta_norm={weighted_delta.norm().item()}")
-                            merged_param.add_(weighted_delta)
-                            del delta
-
-                module._parameters[param_name] = merged_param
-
-        return pre_hook
-
-    def _make_post_hook(self, module_prefix: str):
-        """
-        レイヤーの forward 後 に元のパラメータに戻す
-        """
-        def post_hook(module, inputs, output):
-            for (param_name, param) in module.named_parameters(recurse=False):
-                full_name = f"{module_prefix}.{param_name}"
-                if full_name in self._original_params:
-                    # 4. 元のパラメータを戻す際に一時変数を即解放
-                    orig_param = self._original_params[full_name]
-                    module._parameters[param_name] = orig_param
-                    del self._original_params[full_name]
-            return output
-        return post_hook
+        # 結果をクラス変数にキャッシュ
+        self.merged_params = merged_params
 
     def forward(self, input_ids, labels=None, **kwargs):
-        # デバッグ用：forward開始時のλの状態を確認
-        print("\nForward pass start")
-        print(f"λ requires_grad: {self.lambdas.requires_grad}")
-        print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
-        
+        """
+        merge() で作った self.merged_params を使い、
+        stateless.functional_call で forward を実行
+        """
+        if self.merged_params is None:
+            raise RuntimeError("Please call .merge() before forward()")
+
         with autocast(enabled=True, dtype=torch.float16):
-            outputs = self.base_model(input_ids=input_ids, labels=labels, **kwargs)
-            if hasattr(outputs, 'loss'):
-                loss = outputs.loss
-                # デバッグ用：損失計算後のλの状態を確認
-                print(f"\nLoss computed: {loss.item()}")
-                print(f"Loss requires_grad: {loss.requires_grad}")
-                del outputs.logits
-                del outputs.past_key_values
-                torch.cuda.empty_cache()
-                return loss
-            return outputs
+            outputs = stateless.functional_call(
+                self.base_model,
+                self.merged_params,
+                args=(input_ids,),
+                kwargs={"labels": labels, **kwargs}
+            )
 
-    def cleanup(self):
-        """フックを外す (不要ならそのままでもOK)"""
-        for h in self.hooks:
-            h.remove()
-        self.hooks = []
-
-    def __del__(self):
-        self.cleanup()
+        # huggingface系モデルを想定 → loss があればそれを返す
+        if hasattr(outputs, "loss"):
+            return outputs.loss
+        return outputs
 
 ###############################################################################
 # メインの LambdaOptimizerCrossEntropy クラス (学習処理)
@@ -270,38 +236,27 @@ class LambdaOptimizerCrossEntropy:
         self.logger = logger or logging.getLogger(__name__)
         self.device = torch.device("cuda")
 
-        # 1) ベースモデルを GPU にロード (勾配不要)
-        self.pretrained_model = pretrained_model.to(self.device)
+        # 1) ベースモデルをFP16でGPUに読み込み
+        self.pretrained_model = pretrained_model.to(torch.float16)
+        # gradient checkpointingを有効化
+        self.pretrained_model.gradient_checkpointing_enable()
+        
         for p in self.pretrained_model.parameters():
             p.requires_grad = False
 
         # 2) finetuned - pretrained の差分をCPU上で保持
-        print("Calculating task vectors (CPU deltas)...")
+        print("Calculating task vectors on GPU...")
         self.list_of_task_vectors = []
         with torch.no_grad():
             for i, ft_model in enumerate(models_to_merge, start=1):
-                print(f"Processing model {i}/{len(models_to_merge)} -> CPU delta")
-                ft_model = ft_model.to(self.device)
-
-                tv = CPUStoredTaskVector(self.pretrained_model, ft_model)
+                ft_model = ft_model.to(torch.float16)
+                tv = FastTaskVector(self.pretrained_model, ft_model)
                 self.list_of_task_vectors.append(tv)
-
-                # finetuned_model 不要になったらメモリを開放
-                ft_model.cpu()
-                del ft_model
-                torch.cuda.empty_cache()
-                gc.collect()
-
-        # 参照破棄
-        models_to_merge.clear()
-        del models_to_merge
-        torch.cuda.empty_cache()
-        gc.collect()
 
         # 3) λ (タスク数) 初期化
         num_tasks = len(self.list_of_task_vectors)
         if initial_lambdas is None:
-            initial_lambdas = np.ones(num_tasks, dtype=np.float32)  # 例: 全部1
+            initial_lambdas = np.ones(num_tasks, dtype=np.float16)  # 例: 全部1
         self.lambdas = torch.tensor(
             initial_lambdas,
             requires_grad=True,
@@ -448,208 +403,230 @@ class LambdaOptimizerCrossEntropy:
     ###########################################################################
     @memory_monitor_decorator
     def compute_gsm8k_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
-        device = next(merged_model.parameters()).device
-        
-        # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        
-        prompts, answers = [], []
-        for item in batch_data:
-            p = f"Q: {item['question']}\nA:"
-            a = item["answer"]
-            prompts.append(p)
-            answers.append(a)
+        try:
+            device = next(merged_model.parameters()).device
+            
+            # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            prompts, answers = [], []
+            for item in batch_data:
+                p = f"Q: {item['question']}\nA:"
+                a = item["answer"]
+                prompts.append(p)
+                answers.append(a)
 
-        prompt_enc = tokenizer(
-            prompts,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt"
-        ).to(device)
-        answer_enc = tokenizer(
-            answers,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt"
-        ).to(device)
+            prompt_enc = tokenizer(
+                prompts,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt"
+            ).to(device)
+            answer_enc = tokenizer(
+                answers,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt"
+            ).to(device)
 
-        pad_id = tokenizer.pad_token_id or 0
+            pad_id = tokenizer.pad_token_id or 0
 
-        input_ids_list, labels_list = [], []
-        max_len = 0
+            input_ids_list, labels_list = [], []
+            max_len = 0
 
-        for i in range(len(prompts)):
-            p_ids = prompt_enc.input_ids[i].tolist()
-            a_ids = answer_enc.input_ids[i].tolist()
+            for i in range(len(prompts)):
+                p_ids = prompt_enc.input_ids[i].tolist()
+                a_ids = answer_enc.input_ids[i].tolist()
 
-            p_len = sum(1 for x in p_ids if x != pad_id)
-            a_len = sum(1 for x in a_ids if x != pad_id)
+                p_len = sum(1 for x in p_ids if x != pad_id)
+                a_len = sum(1 for x in a_ids if x != pad_id)
 
-            merged_ids    = p_ids[:p_len] + a_ids[:a_len]
-            merged_labels = ([-100]*p_len) + a_ids[:a_len]
+                merged_ids    = p_ids[:p_len] + a_ids[:a_len]
+                merged_labels = ([-100]*p_len) + a_ids[:a_len]
 
-            max_len = max(max_len, len(merged_ids))
-            input_ids_list.append(merged_ids)
-            labels_list.append(merged_labels)
+                max_len = max(max_len, len(merged_ids))
+                input_ids_list.append(merged_ids)
+                labels_list.append(merged_labels)
 
-        # パディング
-        for i in range(len(input_ids_list)):
-            diff_len = max_len - len(input_ids_list[i])
-            input_ids_list[i].extend([pad_id]*diff_len)
-            labels_list[i].extend([-100]*diff_len)
+            # パディング
+            for i in range(len(input_ids_list)):
+                diff_len = max_len - len(input_ids_list[i])
+                input_ids_list[i].extend([pad_id]*diff_len)
+                labels_list[i].extend([-100]*diff_len)
 
-        input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long).to(device)
-        labels_tensor    = torch.tensor(labels_list,   dtype=torch.long).to(device)
+            input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long, device=self.device)
+            labels_tensor    = torch.tensor(labels_list,   dtype=torch.long, device=self.device)
 
-        with autocast(enabled=True, dtype=torch.float16):
-            outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-            loss = outputs
-            if not loss.requires_grad:
-                loss = loss.detach().requires_grad_(True)
+            with autocast(enabled=True, dtype=torch.float16):
+                outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
+                # 計算グラフを保持したままlossをコピー
+                loss = outputs.clone()
+
+            # 勾配に関係ないテンソルのみを解放
+            del input_ids_tensor, labels_tensor
+            del outputs
+            gc.collect()
+            torch.cuda.empty_cache()
+
             return loss
+
+        finally:
+            torch.cuda.empty_cache()
 
     @memory_monitor_decorator
     def compute_mbpp_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
-        device = next(merged_model.parameters()).device
-        
-        # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        
+        try:
+            device = next(merged_model.parameters()).device
+            
+            # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
 
-        prompts, codes = [], []
-        for item in batch_data:
-            prompts.append(f"{item['text']}\nSolution:\n")
-            codes.append(item["code"])
+            prompts, codes = [], []
+            for item in batch_data:
+                prompts.append(f"{item['text']}\nSolution:\n")
+                codes.append(item["code"])
 
-        prompt_enc = tokenizer(
-            prompts,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt"
-        ).to(device)
-        code_enc   = tokenizer(
-            codes,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt"
-        ).to(device)
+            prompt_enc = tokenizer(
+                prompts,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt"
+            ).to(device)
+            code_enc   = tokenizer(
+                codes,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt"
+            ).to(device)
 
-        pad_id = tokenizer.pad_token_id or 0
+            pad_id = tokenizer.pad_token_id or 0
 
-        input_ids_list, labels_list = [], []
-        max_len = 0
+            input_ids_list, labels_list = [], []
+            max_len = 0
 
-        for i in range(len(prompts)):
-            p_ids = prompt_enc.input_ids[i].tolist()
-            c_ids = code_enc.input_ids[i].tolist()
+            for i in range(len(prompts)):
+                p_ids = prompt_enc.input_ids[i].tolist()
+                c_ids = code_enc.input_ids[i].tolist()
 
-            p_len = sum(1 for x in p_ids if x != pad_id)
-            c_len = sum(1 for x in c_ids if x != pad_id)
+                p_len = sum(1 for x in p_ids if x != pad_id)
+                c_len = sum(1 for x in c_ids if x != pad_id)
 
-            merged_ids    = p_ids[:p_len] + c_ids[:c_len]
-            merged_labels = ([-100]*p_len) + c_ids[:c_len]
+                merged_ids    = p_ids[:p_len] + c_ids[:c_len]
+                merged_labels = ([-100]*p_len) + c_ids[:c_len]
 
-            max_len = max(max_len, len(merged_ids))
-            input_ids_list.append(merged_ids)
-            labels_list.append(merged_labels)
+                max_len = max(max_len, len(merged_ids))
+                input_ids_list.append(merged_ids)
+                labels_list.append(merged_labels)
 
-        # パディング
-        for i in range(len(input_ids_list)):
-            diff_len = max_len - len(input_ids_list[i])
-            input_ids_list[i].extend([pad_id]*diff_len)
-            labels_list[i].extend([-100]*diff_len)
+            # パディング
+            for i in range(len(input_ids_list)):
+                diff_len = max_len - len(input_ids_list[i])
+                input_ids_list[i].extend([pad_id]*diff_len)
+                labels_list[i].extend([-100]*diff_len)
 
-        input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long).to(device)
-        labels_tensor    = torch.tensor(labels_list,   dtype=torch.long).to(device)
+            input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long, device=self.device)
+            labels_tensor    = torch.tensor(labels_list,   dtype=torch.long, device=self.device)
 
-        with autocast(enabled=True, dtype=torch.float16):
-            outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-            loss = outputs
-            if not loss.requires_grad:
-                loss = loss.detach().requires_grad_(True)
+            with autocast(enabled=True, dtype=torch.float16):
+                outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
+                # 計算グラフを保持したままlossをコピー
+                loss = outputs.clone()
+
+            # 勾配に関係ないテンソルのみを解放
+            del input_ids_tensor, labels_tensor
+            del outputs
+            gc.collect()
+            torch.cuda.empty_cache()
+
             return loss
+
+        finally:
+            torch.cuda.empty_cache()
 
     @memory_monitor_decorator
     def compute_ja_mgsm_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
-        device = next(merged_model.parameters()).device
-        
-        # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        
+        try:
+            device = next(merged_model.parameters()).device
+            
+            # トークナイザーにパディングトークンが設定されていない場合、EOSトークンをパディングトークンとして使用
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
 
-        prompts, answers = [], []
-        for item in batch_data:
-            prompts.append(f"{item['question']}\n答えを考える: ")
-            answers.append(item["answer"])
+            prompts, answers = [], []
+            for item in batch_data:
+                prompts.append(f"{item['question']}\n答えを考える: ")
+                answers.append(item["answer"])
 
-        prompt_enc = tokenizer(
-            prompts,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt"
-        ).to(device)
-        answer_enc = tokenizer(
-            answers,
-            padding=True,
-            truncation=True,
-            max_length=max_length,
-            return_tensors="pt"
-        ).to(device)
+            prompt_enc = tokenizer(
+                prompts,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt"
+            ).to(device)
+            answer_enc = tokenizer(
+                answers,
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+                return_tensors="pt"
+            ).to(device)
 
-        pad_id = tokenizer.pad_token_id or 0
+            pad_id = tokenizer.pad_token_id or 0
 
-        input_ids_list, labels_list = [], []
-        max_len = 0
+            input_ids_list, labels_list = [], []
+            max_len = 0
 
-        for i in range(len(prompts)):
-            p_ids = prompt_enc.input_ids[i].tolist()
-            a_ids = answer_enc.input_ids[i].tolist()
+            for i in range(len(prompts)):
+                p_ids = prompt_enc.input_ids[i].tolist()
+                a_ids = answer_enc.input_ids[i].tolist()
 
-            p_len = sum(1 for x in p_ids if x != pad_id)
-            a_len = sum(1 for x in a_ids if x != pad_id)
+                p_len = sum(1 for x in p_ids if x != pad_id)
+                a_len = sum(1 for x in a_ids if x != pad_id)
 
-            merged_ids    = p_ids[:p_len] + a_ids[:a_len]
-            merged_labels = ([-100]*p_len) + a_ids[:a_len]
+                merged_ids    = p_ids[:p_len] + a_ids[:a_len]
+                merged_labels = ([-100]*p_len) + a_ids[:a_len]
 
-            max_len = max(max_len, len(merged_ids))
-            input_ids_list.append(merged_ids)
-            labels_list.append(merged_labels)
+                max_len = max(max_len, len(merged_ids))
+                input_ids_list.append(merged_ids)
+                labels_list.append(merged_labels)
 
-        # パディング
-        for i in range(len(input_ids_list)):
-            diff_len = max_len - len(input_ids_list[i])
-            input_ids_list[i].extend([pad_id]*diff_len)
-            labels_list[i].extend([-100]*diff_len)
+            # パディング
+            for i in range(len(input_ids_list)):
+                diff_len = max_len - len(input_ids_list[i])
+                input_ids_list[i].extend([pad_id]*diff_len)
+                labels_list[i].extend([-100]*diff_len)
 
-        input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long).to(device)
-        labels_tensor    = torch.tensor(labels_list,   dtype=torch.long).to(device)
+            input_ids_tensor = torch.tensor(input_ids_list, dtype=torch.long, device=self.device)
+            labels_tensor    = torch.tensor(labels_list,   dtype=torch.long, device=self.device)
 
-        with autocast(enabled=True, dtype=torch.float16):
-            outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-            loss = outputs
-            if not loss.requires_grad:
-                loss = loss.detach().requires_grad_(True)
+            with autocast(enabled=True, dtype=torch.float16):
+                outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
+                # 計算グラフを保持したままlossをコピー
+                loss = outputs.clone()
+
+            # 勾配に関係ないテンソルのみを解放
+            del input_ids_tensor, labels_tensor
+            del outputs
+            gc.collect()
+            torch.cuda.empty_cache()
+
             return loss
+
+        finally:
+            torch.cuda.empty_cache()
 
     ###########################################################################
     # エポック学習処理 (train_one_epoch)
     ###########################################################################
-    def print_gpu_memory(self, message=""):
-        if torch.cuda.is_available():
-            allocated = torch.cuda.memory_allocated() / 1024**3
-            reserved  = torch.cuda.memory_reserved()  / 1024**3
-            print(f"GPU Memory [{message}]")
-            print(f"  Allocated: {allocated:.2f}GB")
-            print(f"  Reserved:  {reserved:.2f}GB")
-
     def make_batches(self, data_list, bsz):
         return [data_list[i:i+bsz] for i in range(0, len(data_list), bsz)]
 
@@ -657,10 +634,12 @@ class LambdaOptimizerCrossEntropy:
     def train_one_epoch(self, batch_size: int = 2):
         print("\n=== train_one_epoch start ===")
         print(f"λの勾配状態: {self.lambdas.requires_grad}")
-        print(f"Initial λ values: {self.lambdas.detach().cpu().numpy()}")
-
+        
+        self.merged_model.merge()
+                
+        # optimizer.zero_gradをループの外に出す
         self.optimizer.zero_grad()
-        total_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+        total_loss = torch.tensor(0.0, device=self.device, dtype=torch.float16, requires_grad=True)
 
         # タスクごとにバッチを回す
         tasks = [
@@ -671,11 +650,11 @@ class LambdaOptimizerCrossEntropy:
 
         try:
             self.merged_model.to(self.device)
-
+            
             for task_name, data, tokenizer, compute_loss_fn in tasks:
                 print(f"\nProcessing task: {task_name}")
                 batches = self.make_batches(data, batch_size)
-                task_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+                task_loss = torch.tensor(0.0, device=self.device, dtype=torch.float16, requires_grad=True)
 
                 for batch_idx, batch in enumerate(batches):
                     print(f"\nBatch {batch_idx + 1}/{len(batches)}")
@@ -683,30 +662,26 @@ class LambdaOptimizerCrossEntropy:
                     print(f"Batch loss: {batch_loss.item()}")
                     print(f"Batch loss requires_grad: {batch_loss.requires_grad}")
                     task_loss = task_loss + batch_loss
-
+                    
+                    del batch
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    
                 print(f"Task {task_name} total loss: {task_loss.item()}")
                 total_loss = total_loss + task_loss
 
-            # 勾配計算前のλの状態
-            print("\nBefore backward:")
-            print(f"λ requires_grad: {self.lambdas.requires_grad}")
-            print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
-
+            # backward()実行
             total_loss.backward()
-
-            # 勾配計算後のλの状態
-            print("\nAfter backward:")
-            print(f"λ requires_grad: {self.lambdas.requires_grad}")
-            print(f"λ gradients: {self.lambdas.grad}")
-
+            
+            # optimizerのstepを実行
             self.optimizer.step()
             
-            # optimizer.step()後のλの状態
-            print("\nAfter optimizer step:")
-            print(f"λ values: {self.lambdas.detach().cpu().numpy()}")
-
+            # schedulerがあれば更新
             if self.scheduler is not None:
                 self.scheduler.step()
+            
+            gc.collect()
+            torch.cuda.empty_cache()
 
         finally:
             self.merged_model.cpu()
@@ -721,9 +696,6 @@ class LambdaOptimizerCrossEntropy:
     def optimize(self):
         best_loss = float("inf")
         best_lambdas = None
-
-        # MixedPrecisionでまとめてやる場合 (本実装ではステップごとにautocast済みなので省略可)
-        scaler = GradScaler()
 
         for epoch in range(self.num_epochs):
             epoch_loss = self.train_one_epoch(batch_size=self.batch_size)
@@ -780,7 +752,7 @@ class LambdaOptimizerCrossEntropy:
                 lambdas.append(val)
 
             # 反映
-            self.lambdas.data = torch.tensor(lambdas, dtype=torch.float32, device=self.device)
+            self.lambdas.data = torch.tensor(lambdas, dtype=torch.float16, device=self.device)
 
             # 1エポックだけ学習
             epoch_loss = self.train_one_epoch(batch_size=self.batch_size)
@@ -793,7 +765,7 @@ class LambdaOptimizerCrossEntropy:
         best_loss = study.best_value
 
         # 反映
-        self.lambdas.data = torch.tensor(best_lambdas, dtype=torch.float32, device=self.device)
+        self.lambdas.data = torch.tensor(best_lambdas, dtype=torch.float16, device=self.device)
 
         self.wandb_run.log({
             "optuna_best_trial": study.best_trial.number,
@@ -815,3 +787,5 @@ class LambdaOptimizerCrossEntropy:
         print(f"[Optuna] Best Lambdas: {best_lambdas}")
 
         return np.array(best_lambdas)
+
+
