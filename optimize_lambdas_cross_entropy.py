@@ -221,7 +221,7 @@ class LambdaOptimizerCrossEntropy:
         initial_lambdas: Optional[np.ndarray] = None,
         num_epochs: int = 10,
         learning_rate: float = 0.001,
-        batch_size: int = 2,
+        batch_size: int = 1,
         num_train_samples: int = 4,
         optimizer_type: str = "adam",
         scheduler_type: str = "cosine",

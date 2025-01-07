@@ -35,7 +35,7 @@ python3 merge_llms_instruct_math_code.py \
     --lambda_strategy $STRATEGY \
     --num_epochs 10 \
     --learning_rate 0.001 \
-    --num_train_samples 10 \
+    --num_train_samples 4 \
     --optimizer_type adam \
     --initial_lambda_filepath $INITIAL_LAMBDA_FILEPATH 
 #    --run_name $RUN_NAME \
