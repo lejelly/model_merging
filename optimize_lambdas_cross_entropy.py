@@ -23,6 +23,7 @@ from torch.cuda.amp import autocast, GradScaler
 
 # Cosine Warmupスケジューラーのヘルパー関数
 import math
+
 def get_cosine_schedule_with_warmup(
     optimizer: torch.optim.Optimizer,
     num_warmup_steps: int,
@@ -401,7 +402,7 @@ class LambdaOptimizerCrossEntropy:
     ###########################################################################
     # GSM8K/MBPP/ja-MGSMの compute_*_batch_loss
     ###########################################################################
-    @memory_monitor_decorator
+    #@memory_monitor_decorator
     def compute_gsm8k_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         try:
             device = next(merged_model.parameters()).device
@@ -462,11 +463,12 @@ class LambdaOptimizerCrossEntropy:
 
             with autocast(enabled=True, dtype=torch.float16):
                 outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-                # 計算グラフを保持したままlossをコピー
+                # 計算グラフを保持したままlossをdetachせずにコピー
                 loss = outputs.clone()
 
-            # 勾配に関係ないテンソルのみを解放
+            # 勾配に関係ないテンソルを明示的に解放
             del input_ids_tensor, labels_tensor
+            del prompt_enc, answer_enc
             del outputs
             gc.collect()
             torch.cuda.empty_cache()
@@ -474,9 +476,10 @@ class LambdaOptimizerCrossEntropy:
             return loss
 
         finally:
+            # 例外発生時にもメモリを解放
             torch.cuda.empty_cache()
 
-    @memory_monitor_decorator
+    #@memory_monitor_decorator
     def compute_mbpp_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         try:
             device = next(merged_model.parameters()).device
@@ -541,6 +544,7 @@ class LambdaOptimizerCrossEntropy:
 
             # 勾配に関係ないテンソルのみを解放
             del input_ids_tensor, labels_tensor
+            del prompt_enc, code_enc
             del outputs
             gc.collect()
             torch.cuda.empty_cache()
@@ -550,7 +554,7 @@ class LambdaOptimizerCrossEntropy:
         finally:
             torch.cuda.empty_cache()
 
-    @memory_monitor_decorator
+    #@memory_monitor_decorator
     def compute_ja_mgsm_batch_loss(self, batch_data: List[Dict], tokenizer, merged_model, max_length=256) -> torch.Tensor:
         try:
             device = next(merged_model.parameters()).device
@@ -615,6 +619,7 @@ class LambdaOptimizerCrossEntropy:
 
             # 勾配に関係ないテンソルのみを解放
             del input_ids_tensor, labels_tensor
+            del prompt_enc, answer_enc
             del outputs
             gc.collect()
             torch.cuda.empty_cache()
@@ -630,7 +635,7 @@ class LambdaOptimizerCrossEntropy:
     def make_batches(self, data_list, bsz):
         return [data_list[i:i+bsz] for i in range(0, len(data_list), bsz)]
 
-    @memory_monitor_decorator
+    #@memory_monitor_decorator
     def train_one_epoch(self, batch_size: int = 2):
         print("\n=== train_one_epoch start ===")
         print(f"λの勾配状態: {self.lambdas.requires_grad}")
@@ -648,9 +653,7 @@ class LambdaOptimizerCrossEntropy:
             ("ja_mgsm", self.ja_mgsm_data, self.tokenizers[2], self.compute_ja_mgsm_batch_loss)
         ]
 
-        try:
-            self.merged_model.to(self.device)
-            
+        try:            
             for task_name, data, tokenizer, compute_loss_fn in tasks:
                 print(f"\nProcessing task: {task_name}")
                 batches = self.make_batches(data, batch_size)
@@ -684,7 +687,6 @@ class LambdaOptimizerCrossEntropy:
             torch.cuda.empty_cache()
 
         finally:
-            self.merged_model.cpu()
             torch.cuda.empty_cache()
 
         return total_loss.item()
@@ -692,7 +694,7 @@ class LambdaOptimizerCrossEntropy:
     ###########################################################################
     # 学習全体 (optimize)
     ###########################################################################
-    @memory_monitor_decorator
+    #@memory_monitor_decorator
     def optimize(self):
         best_loss = float("inf")
         best_lambdas = None
@@ -742,7 +744,7 @@ class LambdaOptimizerCrossEntropy:
     ###########################################################################
     # (任意) Optuna の実装例
     ###########################################################################
-    @memory_monitor_decorator
+    #@memory_monitor_decorator
     def optimize_with_optuna(self, n_trials: int = 30) -> np.ndarray:
         def objective(trial):
             # 新しいλをサンプリング
