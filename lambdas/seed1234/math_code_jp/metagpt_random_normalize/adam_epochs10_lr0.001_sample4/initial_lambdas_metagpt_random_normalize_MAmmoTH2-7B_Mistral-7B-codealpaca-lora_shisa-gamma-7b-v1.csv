@@ -1,0 +1,4 @@
+model_name,lambda
+TIGER-Lab/MAmmoTH2-7B,0.15304953701081017
+Nondzu/Mistral-7B-codealpaca-lora,0.4971477267172861
+augmxnt/shisa-gamma-7b-v1,0.3498027362719038

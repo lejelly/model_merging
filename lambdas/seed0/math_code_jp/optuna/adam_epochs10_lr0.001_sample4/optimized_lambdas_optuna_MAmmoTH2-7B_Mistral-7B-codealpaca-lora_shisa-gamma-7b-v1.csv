@@ -1,0 +1,2 @@
+epoch,model_name,lambdas,loss
+1,"['TIGER-Lab/MAmmoTH2-7B', 'Nondzu/Mistral-7B-codealpaca-lora', 'augmxnt/shisa-gamma-7b-v1']","[0.16619945513157613, 0.07164547191211272, 0.024224100678643848]",16.13397979736328
