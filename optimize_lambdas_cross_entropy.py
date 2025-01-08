@@ -745,49 +745,90 @@ class LambdaOptimizerCrossEntropy:
     # (任意) Optuna の実装例
     ###########################################################################
     #@memory_monitor_decorator
-    def optimize_with_optuna(self, n_trials: int = 30) -> np.ndarray:
+    def optimize_with_optuna(self, n_trials: int = 100) -> np.ndarray:
         def objective(trial):
-            # 新しいλをサンプリング
+            # λのサンプリング（正規化なし）
             lambdas = []
             for i in range(len(self.list_of_task_vectors)):
                 val = trial.suggest_float(f'lambda_{i}', 0.0, 1.0)
                 lambdas.append(val)
 
-            # 反映
+            # モデルに反映（requires_grad=Falseで設定）
             self.lambdas.data = torch.tensor(lambdas, dtype=torch.float16, device=self.device)
+            self.lambdas.requires_grad = False  # 勾配計算を無効化
+            self.merged_model.merge()
+            self.merged_model.eval()
 
-            # 1エポックだけ学習
-            epoch_loss = self.train_one_epoch(batch_size=self.batch_size)
-            return epoch_loss
+            with torch.no_grad():
+                total_loss = torch.tensor(0.0, device=self.device, dtype=torch.float16)
+                
+                tasks = [
+                    ("gsm8k",   self.gsm8k_data,   self.tokenizers[0], self.compute_gsm8k_batch_loss),
+                    ("mbpp",    self.mbpp_data,    self.tokenizers[1], self.compute_mbpp_batch_loss),
+                    ("ja_mgsm", self.ja_mgsm_data, self.tokenizers[2], self.compute_ja_mgsm_batch_loss)
+                ]
 
-        study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=n_trials)
+                for task_name, data, tokenizer, compute_loss_fn in tasks:
+                    batches = self.make_batches(data, self.batch_size)
+                    task_loss = torch.tensor(0.0, device=self.device, dtype=torch.float16)
 
+                    for batch in batches:
+                        batch_loss = compute_loss_fn(batch, tokenizer, self.merged_model)
+                        task_loss = task_loss + batch_loss
+
+                    total_loss = total_loss + task_loss
+
+                # メモリ解放
+                torch.cuda.empty_cache()
+                
+                return total_loss.item()
+
+        # Optunaの設定
+        study = optuna.create_study(
+            direction='minimize',
+            sampler=optuna.samplers.TPESampler(seed=self.seed)
+        )
+        
+        # 探索の実行
+        study.optimize(
+            objective, 
+            n_trials=n_trials,
+            callbacks=[
+                lambda study, trial: wandb.log({
+                    "best_loss": study.best_value,
+                    **{f"best_lambda_{i}": v for i, v in enumerate(study.best_params.values())}
+                }) if self.wandb_run else None
+            ]
+        )
+
+        # 最適なλを取得
         best_lambdas = [study.best_params[f'lambda_{i}'] for i in range(len(self.list_of_task_vectors))]
+        best_lambdas = np.array(best_lambdas)
         best_loss = study.best_value
 
-        # 反映
-        self.lambdas.data = torch.tensor(best_lambdas, dtype=torch.float16, device=self.device)
-
-        self.wandb_run.log({
-            "optuna_best_trial": study.best_trial.number,
-            "optuna_best_loss": best_loss,
-            **{f"optuna_best_lambda_{i}": v for i, v in enumerate(best_lambdas)}
-        })
-
-        if self.optimized_lambda_filepath:
-            if not os.path.exists(self.optimized_lambda_filepath):
-                pd.DataFrame(columns=["model_name","lambdas","loss"]).to_csv(self.optimized_lambda_filepath, index=False)
-            optimized_df = pd.DataFrame({
-                'model_name': [self.finetuned_model_names],
-                'lambdas': [best_lambdas],
-                'loss': [best_loss]
-            })
-            optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
-
-        print(f"[Optuna] Best Trial: {study.best_trial.number}, Best Loss: {best_loss:.4f}")
+        # 結果をログ出力
+        print(f"\n[Optuna] Best Trial: {study.best_trial.number}")
+        print(f"[Optuna] Best Loss: {best_loss:.4f}")
         print(f"[Optuna] Best Lambdas: {best_lambdas}")
 
-        return np.array(best_lambdas)
+        # CSVに保存
+        if self.optimized_lambda_filepath:
+            optimized_df = pd.DataFrame({
+                'epoch': [1],  # Optunaでは1エポックとして扱う
+                'model_name': [self.finetuned_model_names],
+                'lambdas': [best_lambdas.tolist()],
+                'loss': [best_loss]
+            })
+            if os.path.exists(self.optimized_lambda_filepath):
+                optimized_df.to_csv(self.optimized_lambda_filepath, mode='a', header=False, index=False)
+            else:
+                optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
+
+        # 最適なλをモデルに�定
+        self.lambdas.data = torch.tensor(best_lambdas, dtype=torch.float16, device=self.device)
+        self.lambdas.requires_grad = False
+        self.merged_model.merge()
+
+        return best_lambdas
 
 
