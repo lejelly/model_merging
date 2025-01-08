@@ -1,25 +1,36 @@
 
 random:
-gsm8k: 0.5567 ± 0.0039
-mbpp: 0.3747 ± 0.0561
-ja_mgsm: 0.2067 ± 0.1361
+gsm8k: 57.82 ± 2.55
+mbpp: 37.27 ± 3.06
+ja_mgsm: 28.93 ± 1.80
+avg: 41.34
+
+random_normalize:
+gsm8k: 57.27 ± 2.02
+mbpp: 43.93 ± 1.21
+ja_mgsm: 30.67 ± 4.39
+avg: 43.96
 
 all one:
-gsm8k: 0.3237 ± 0.0000
-mbpp: 0.1340 ± 0.0000
-ja_mgsm: 0.0760 ± 0.0000
+gsm8k: 33.81 ± 0.00
+mbpp: 13.80 ± 0.00
+ja_mgsm: 7.20 ± 0.00
+avg: 18.27
 
 average:
-gsm8k: 0.5914 ± 0.0000
-mbpp: 0.4280 ± 0.0000
-ja_mgsm: 0.3040 ± 0.0000
+gsm8k: 58.53 ± 0.00
+mbpp: 43.00 ± 0.00
+ja_mgsm: 30.00 ± 0.00
+avg: 43.84
 
 optuna:
-gsm8k: 0.6320 ± 0.0057
-mbpp: 0.3887 ± 0.0220
-ja_mgsm: 0.3253 ± 0.0467
+gsm8k: 43.92 ± 7.41
+mbpp: 43.87 ± 0.46
+ja_mgsm: 14.27 ± 4.05
+avg: 34.02
 
 metagpt_optimize:
-gsm8k: 0.5186 ± 0.0000
-mbpp: 0.4380 ± 0.0000
-ja_mgsm: 0.2720 ± 0.0000
+gsm8k: 53.50 ± 0.88
+mbpp: 44.47 ± 0.12
+ja_mgsm: 25.20 ± 0.00
+avg: 41.06
