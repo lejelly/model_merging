@@ -1,12 +1,25 @@
 #!/bin/bash
+#PBS -q short-g
+#PBS -l select=1 
+#PBS -W group_list=gj26 
+#PBS -l walltime=02:00:00
+#PBS -j oe
+#PBS -N log_metagpt
 
 # module load
+cd $PBS_O_WORKDIR
+echo $PBS_O_WORKDIR
+module purge
 source import-env.sh .env
+module load gcc/12.4.0
+module load python/3.10.16 
+module load cuda/12.4
+module load cudnn/9.5.1.17
 
-DATASETNAME=$1
-SEED=$2
+DATASETNAME=$dataset
+SEED=$seed
 MERGE_METHOD=task_arithmetic
-STRATEGY=$3
+STRATEGY=$strategy
 
 COMP_FILE_PATH=./results_metagpt/${SEED}/math_code_jp/${STRATEGY}/${DATASETNAME}.txt
 LOG_RESP_PATH=./results_metagpt/${SEED}/math_code_jp/${STRATEGY}/${DATASETNAME}/json_logs/${STRATEGY}.json

@@ -12,6 +12,7 @@ import torch
 import datasets
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import AddedToken
+sys.path.append('/work/gj26/b20042/model_merging/vllm')
 from vllm import LLM, SamplingParams
 from human_eval.data import write_jsonl, read_problems, stream_jsonl
 
@@ -23,6 +24,7 @@ from utils.load_config import cache_dir
 import transformers
 from utils.utils import LanguageDetector
 from typing import Optional, Any
+
 
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -53,6 +55,14 @@ finetuned_model_backbone_mapping_dict = {
     "mistralai/Mistral-7B-Instruct-v0.2": "mistralai/Mistral-7B-v0.1",
     "TIGER-Lab/MAmmoTH2-7B": "mistralai/Mistral-7B-v0.1",
     "Nondzu/Mistral-7B-codealpaca-lora": "mistralai/Mistral-7B-v0.1", 
+    
+    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
+    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
+    "elyza/ELYZA-japanese-Llama-2-7b": "meta-llama/Llama-2-7b",
+    
+    # Base model評価用
+    "mistralai/Mistral-7B-v0.1": "mistralai/Mistral-7B-v0.1",
+    "meta-llama/Llama-2-7b": "meta-llama/Llama-2-7b",
 }
 
 
@@ -683,12 +693,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("Interface for inference LLMs")
     parser.add_argument("--finetuned_model_name", type=str, default="WizardLM-13B-V1.2", help="name of the finetuned language model",
-                        choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B", "upaya07/Arithmo2-Mistral-7B",
-                                 "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
-                                 "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
-                                 "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf",
-                                 "google/gemma-2-2b-jpn-it", "meta-llama/Llama-2-7b-chat-hf", "TIGER-Lab/MAmmoTH-7B", "mrm8488/llama-2-coder-7b",
-                                 "mistralai/Mistral-7B-Instruct-v0.2", "TIGER-Lab/MAmmoTH2-7B", "Nondzu/Mistral-7B-codealpaca-lora",])
+                        choices=[
+                            "mistralai/Mistral-7B-v0.1", "meta-llama/Llama-2-7b",  # Baseモデルを選択肢に追加
+                            "WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B", "upaya07/Arithmo2-Mistral-7B",
+                             "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
+                             "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
+                             "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf",
+                             "google/gemma-2-2b-jpn-it",
+                             "mistralai/Mistral-7B-Instruct-v0.2", "TIGER-Lab/MAmmoTH2-7B", "Nondzu/Mistral-7B-codealpaca-lora",
+                             "meta-llama/Llama-2-7b", "TIGER-Lab/MAmmoTH-7B", "mrm8488/llama-2-coder-7b", "elyza/ELYZA-japanese-Llama-2-7b",])
 
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
     parser.add_argument("--start_index", type=int, default=0)
@@ -703,6 +716,12 @@ if __name__ == "__main__":
     parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
     parser.add_argument("--log_resp_path", default=None, help="whether to save all response")
     parser.add_argument("--seed", type=int, default=0, help="seed")
+    
+    
+    parser.add_argument("--gradation1", type=float, default=None, help="gradation1")
+    parser.add_argument("--gradation2", type=float, default=None, help="gradation2")
+    parser.add_argument("--gradation3", type=float, default=None, help="gradation3")
+
 
     try:
         args = parser.parse_args()

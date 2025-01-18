@@ -7,9 +7,13 @@ def main():
         "TIGER-Lab/MAmmoTH2-7B",
         "Nondzu/Mistral-7B-codealpaca-lora",
         "augmxnt/shisa-gamma-7b-v1",
-        "mistralai/Mistral-7B-v0.1"
+        "mistralai/Mistral-7B-v0.1",
+        "meta-llama/Llama-2-7b",
+        "TIGER-Lab/MAmmoTH-7B",
+        "mrm8488/llama-2-coder-7b",
+        "elyza/ELYZA-japanese-Llama-2-7b"
     ], help='List of model IDs to download')
-    parser.add_argument('--cache-dir', default='.cache', help='Base directory for downloaded models')
+    parser.add_argument('--cache-dir', default='/work/gj26/b20042/model_merging/.cache', help='Base directory for downloaded models')
     
     args = parser.parse_args()
     

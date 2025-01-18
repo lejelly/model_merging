@@ -42,6 +42,11 @@ task_model_mapping_dict = {
     "code": "Nondzu/Mistral-7B-codealpaca-lora",
     "jp": "augmxnt/shisa-gamma-7b-v1",
     
+    
+    "llama2_math": "TIGER-Lab/MAmmoTH-7B",
+    "llama2_code": "mrm8488/llama-2-coder-7b",
+    "llama2_jp": "elyza/ELYZA-japanese-Llama-2-7b",
+    
 }
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -51,13 +56,13 @@ finetuned_model_backbone_mapping_dict = {
     "BioMistral/BioMistral-7B": "mistralai/Mistral-7B-v0.1",
     "upaya07/Arithmo2-Mistral-7B": "mistralai/Mistral-7B-v0.1",
     
-    "meta-llama/Llama-2-7b-chat-hf": "meta-llama/Llama-2-7b",
-    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
-    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
-    
     "mistralai/Mistral-7B-Instruct-v0.2": "mistralai/Mistral-7B-v0.1",
     "TIGER-Lab/MAmmoTH2-7B": "mistralai/Mistral-7B-v0.1",
     "Nondzu/Mistral-7B-codealpaca-lora": "mistralai/Mistral-7B-v0.1", 
+    
+    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
+    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
+    "elyza/ELYZA-japanese-Llama-2-7b": "meta-llama/Llama-2-7b",
 }
 
 def print_lambda_distribution(lambdas, model_names):
@@ -113,16 +118,16 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
         logger.info(f"configuration is {args}")
 
         try:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.float16)
-            pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
-        except:
             if "meta-llama/Llama-2-7b" in args.pretrained_model_name:
                 from transformers import LlamaForCausalLM, LlamaTokenizer
-                pretrained_model = LlamaForCausalLM.from_pretrained("/work/gb20/b20042/model_merging/llama2")
-                pretrained_tokenizer = LlamaTokenizer.from_pretrained("/work/gb20/b20042/model_merging/llama2")
-            else:
-                pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
-                pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
+                pretrained_model = LlamaForCausalLM.from_pretrained(os.path.join(cache_dir, args.pretrained_model_name))
+                pretrained_tokenizer = LlamaTokenizer.from_pretrained(os.path.join(cache_dir, args.pretrained_model_name))
+            else: 
+                pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.float16)
+                pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
+        except:
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
+            pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
 
         
         
@@ -181,6 +186,14 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
             if args.lambda_strategy == "metagpt":
                 optimized_lambdas = metagpt(pretrained_model, models_to_merge)
                 print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+                
+                # lambdasをCSVファイルに保存
+                os.makedirs("./lambdas", exist_ok=True)
+                df = pd.DataFrame({
+                    'model_name': finetuned_model_names,
+                    'lambda': optimized_lambdas
+                })
+                df.to_csv('./lambdas/initial_lambdas_metagpt.csv', index=False)
             elif args.lambda_strategy == "metagpt_strict":
                 optimized_lambdas = metagpt_strict(pretrained_model, models_to_merge)
                 print_lambda_distribution(optimized_lambdas, finetuned_model_names)
@@ -475,6 +488,9 @@ parser.add_argument("--merge_math3", action="store_true", default=False, help="w
 parser.add_argument("--merge_instruct", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merge_math", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merge_code", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--llama2_math", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--llama2_code", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--llama2_jp", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merging_method_name", type=str, default="average_merging", help="name of the method to merge models",
                     choices=["average_merging", "task_arithmetic", "mask_merging", "ties_merging"])
 parser.add_argument("--scaling_coefficient", type=float, default=1.0, help="scaling coefficient to merge the task vector")
@@ -535,10 +551,10 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    assert sum([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp]) >= 2, "should merge two tasks at least!"
+    assert sum([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp, args.llama2_math, args.llama2_code, args.llama2_jp]) >= 2, "should merge two tasks at least!"
     finetuned_model_names = []
     merge_task_names = []
-    for merge_flag, task_name in zip([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp], ["math1", "math2", "math3", "jp1", "jp2", "bio", "instruct", "math", "code", "jp"]):
+    for merge_flag, task_name in zip([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp, args.llama2_math, args.llama2_code, args.llama2_jp], ["math1", "math2", "math3", "jp1", "jp2", "bio", "instruct", "math", "code", "jp", "llama2_math", "llama2_code", "llama2_jp"]):
         if merge_flag:
             finetuned_model_names.append(task_model_mapping_dict[task_name])
             merge_task_names.append(task_name)
