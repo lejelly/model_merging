@@ -1,0 +1,4 @@
+model_name,lambda
+TIGER-Lab/MAmmoTH-7B,0.5488135039273248
+mrm8488/llama-2-coder-7b,0.7151893663724195
+elyza/ELYZA-japanese-Llama-2-7b,0.6027633760716439

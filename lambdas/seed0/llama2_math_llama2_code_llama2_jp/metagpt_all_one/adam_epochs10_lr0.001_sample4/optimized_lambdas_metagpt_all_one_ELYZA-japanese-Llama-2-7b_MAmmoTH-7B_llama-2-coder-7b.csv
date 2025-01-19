@@ -1,0 +1,11 @@
+epoch,model_name,lambdas,loss
+1,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.9990234375, 0.9990234375, 1.0009765625]",21.0452823638916
+2,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.998046875, 0.998046875, 1.001953125]",21.040355682373047
+3,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.9970703125, 0.9970703125, 1.0029296875]",21.033184051513672
+4,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.99609375, 0.99609375, 1.00390625]",21.026456832885742
+5,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.99560546875, 0.99560546875, 1.0048828125]",21.015941619873047
+6,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.9951171875, 0.9951171875, 1.0048828125]",21.009811401367188
+7,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.99462890625, 0.99462890625, 1.0048828125]",21.005985260009766
+8,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.99462890625, 0.99462890625, 1.0048828125]",21.00088882446289
+9,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.99462890625, 0.99462890625, 1.0048828125]",21.00088882446289
+10,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.99462890625, 0.99462890625, 1.0048828125]",21.00088882446289

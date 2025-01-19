@@ -1,0 +1,2 @@
+epoch,model_name,lambdas,loss
+1,"['TIGER-Lab/MAmmoTH-7B', 'mrm8488/llama-2-coder-7b', 'elyza/ELYZA-japanese-Llama-2-7b']","[0.13167404491840162, 0.0001265104014817886, 0.7111777225710014]",17.470680236816406
