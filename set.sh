@@ -1,8 +1,6 @@
 #!/bin/bash
 
-git clone https://github.com/lejelly/model_merging.git
-cd model_merging
-git switch --track origin/wisteria/train_data_lambda
+cd /home/ubuntu/model_merging
 python -m venv work
 source work/bin/activate
 pip install -r requirements.txt
