@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#source work/bin/activate
+source work/bin/activate
 
 # nohup python download.py --models "TIGER-Lab/MAmmoTH2-7B" &
 # nohup python download.py --models "augmxnt/shisa-gamma-7b-v1" &
