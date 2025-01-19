@@ -12,6 +12,7 @@ import torch
 import datasets
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import AddedToken
+sys.path.append('/work/gj26/b20042/model_merging/vllm')
 from vllm import LLM, SamplingParams
 from human_eval.data import write_jsonl, read_problems, stream_jsonl
 
@@ -23,6 +24,7 @@ from utils.load_config import cache_dir
 import transformers
 from utils.utils import LanguageDetector
 from typing import Optional, Any
+
 
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -53,19 +55,27 @@ finetuned_model_backbone_mapping_dict = {
     "mistralai/Mistral-7B-Instruct-v0.2": "mistralai/Mistral-7B-v0.1",
     "TIGER-Lab/MAmmoTH2-7B": "mistralai/Mistral-7B-v0.1",
     "Nondzu/Mistral-7B-codealpaca-lora": "mistralai/Mistral-7B-v0.1", 
+    
+    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
+    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
+    "elyza/ELYZA-japanese-Llama-2-7b": "meta-llama/Llama-2-7b",
+    
+    # Base model評価用
+    "mistralai/Mistral-7B-v0.1": "mistralai/Mistral-7B-v0.1",
+    "meta-llama/Llama-2-7b": "meta-llama/Llama-2-7b",
 }
 
 
 def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, recovered_model_save_path: str, recover_manner: str):
     try:
-        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.float16)
+        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name))
-        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.float16)
+        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
         finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name))
     except:
-        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
+        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
         pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir)
-        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.float16)
+        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
         finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir)
 
     # set the pad_token of pretrained and finetuned tokenizer
@@ -101,21 +111,21 @@ def recover_from_pretrained_model(finetuned_model_name, pretrained_model_name, a
 def create_llm(finetuned_model_name, pretrained_model_name, args, logger: logging.Logger, tensor_parallel_size=1, just_inference=False, save_model_path=None):
     if just_inference:
         if os.path.exists(os.path.join(cache_dir, finetuned_model_name)):
-            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
+            llm = LLM(model=os.path.join(cache_dir, finetuned_model_name), tensor_parallel_size=tensor_parallel_size, dtype='bfloat', gpu_memory_utilization=0.4, device="cuda")
         else:
             #assert os.path.exists(finetuned_model_name)
-            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
+            llm = LLM(model=finetuned_model_name, tensor_parallel_size=tensor_parallel_size, dtype='bfloat', gpu_memory_utilization=0.4, device="cuda")
         assert save_model_path is None
     else:
         try:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, pretrained_model_name))
-            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name))
         except:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=pretrained_model_name, cache_dir=cache_dir)
-            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
+            finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat)
             finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=finetuned_model_name, cache_dir=cache_dir)
 
 
@@ -152,7 +162,7 @@ def create_llm(finetuned_model_name, pretrained_model_name, args, logger: loggin
         finetuned_model.save_pretrained(save_directory=save_model_path)
         finetuned_tokenizer.save_pretrained(save_directory=save_model_path)
         logger.info(f"model is saved")
-        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='bfloat16', gpu_memory_utilization=0.9)
+        llm = LLM(model=save_model_path, tensor_parallel_size=tensor_parallel_size, dtype='bfloat', gpu_memory_utilization=0.9)
 
     return llm
 
@@ -683,12 +693,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser("Interface for inference LLMs")
     parser.add_argument("--finetuned_model_name", type=str, default="WizardLM-13B-V1.2", help="name of the finetuned language model",
-                        choices=["WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B", "upaya07/Arithmo2-Mistral-7B",
-                                 "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
-                                 "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
-                                 "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf",
-                                 "google/gemma-2-2b-jpn-it", "meta-llama/Llama-2-7b-chat-hf", "TIGER-Lab/MAmmoTH-7B", "mrm8488/llama-2-coder-7b",
-                                 "mistralai/Mistral-7B-Instruct-v0.2", "TIGER-Lab/MAmmoTH2-7B", "Nondzu/Mistral-7B-codealpaca-lora",])
+                        choices=[
+                            "mistralai/Mistral-7B-v0.1", "meta-llama/Llama-2-7b",  # Baseモデルを選択肢に追加
+                            "WizardLMTeam/WizardMath-7B-V1.1", "augmxnt/shisa-gamma-7b-v1", "GAIR/Abel-7B-002","tokyotech-llm/Swallow-MS-7b-v0.1", "BioMistral/BioMistral-7B", "upaya07/Arithmo2-Mistral-7B",
+                             "rinna/llama-3-youko-8b", "rombodawg/Llama-3-8B-Instruct-Coder-v2", "lightblue/suzume-llama-3-8B-japanese",
+                             "EleutherAI/llemma_7b", "meta-llama/CodeLlama-7b-hf", "meta-llama/CodeLlama-7b-Python-hf",
+                             "Xwin-LM/Xwin-Math-13B-V1.0", "layoric/llama-2-13b-code-alpaca", "meta-llama/CodeLlama-13b-hf",
+                             "google/gemma-2-2b-jpn-it",
+                             "mistralai/Mistral-7B-Instruct-v0.2", "TIGER-Lab/MAmmoTH2-7B", "Nondzu/Mistral-7B-codealpaca-lora",
+                             "meta-llama/Llama-2-7b", "TIGER-Lab/MAmmoTH-7B", "mrm8488/llama-2-coder-7b", "elyza/ELYZA-japanese-Llama-2-7b",])
 
     parser.add_argument("--dataset_name", type=str, default="alpaca_eval", help="dataset to be used", choices=["alpaca_eval", "gsm8k", "MATH", "human_eval", "mbpp", "ja_mgsm"])
     parser.add_argument("--start_index", type=int, default=0)
@@ -703,6 +716,12 @@ if __name__ == "__main__":
     parser.add_argument("--comp_file_path", default=None, help="whether to save llm result to compare to others")
     parser.add_argument("--log_resp_path", default=None, help="whether to save all response")
     parser.add_argument("--seed", type=int, default=0, help="seed")
+    
+    
+    parser.add_argument("--gradation1", type=float, default=None, help="gradation1")
+    parser.add_argument("--gradation2", type=float, default=None, help="gradation2")
+    parser.add_argument("--gradation3", type=float, default=None, help="gradation3")
+
 
     try:
         args = parser.parse_args()

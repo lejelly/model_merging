@@ -16,19 +16,18 @@ from utils.load_config import cache_dir
 from utils.utils import delete_all_models, aggressive_clear_gpu_memory
 
 import numpy as np
+import pandas as pd
 from typing import List
 from transformers import PreTrainedModel
 from tqdm import tqdm
 
-from proposed_methods import metagpt, WeightingStrategy, metagpt_advanced, visualize_task_similarities, calculate_lambda_optimized, calculate_lambda_full, calc_MetaRiemann, metagpt_strict, profile_metagpt_strict, analyze_task_vectors
+from proposed_methods import metagpt, WeightingStrategy
 from calculate_lambdas import calculate_and_save_lambdas
-
-import pandas as pd
-
-from optimize_lambdas import LambdaOptimizer
-from optimise_lambdas_spsa import LambdaOptimizerSPSA
 from optimize_lambdas_cross_entropy import LambdaOptimizerCrossEntropy
-from test_lambda_gradients import test_lambda_gradients
+
+import psutil
+import GPUtil
+from datetime import datetime
 
 task_model_mapping_dict = {
     "jp1": "augmxnt/shisa-gamma-7b-v1",
@@ -43,6 +42,11 @@ task_model_mapping_dict = {
     "code": "Nondzu/Mistral-7B-codealpaca-lora",
     "jp": "augmxnt/shisa-gamma-7b-v1",
     
+    
+    "llama2_math": "TIGER-Lab/MAmmoTH-7B",
+    "llama2_code": "mrm8488/llama-2-coder-7b",
+    "llama2_jp": "elyza/ELYZA-japanese-Llama-2-7b",
+    
 }
 finetuned_model_backbone_mapping_dict = {
     "WizardLMTeam/WizardMath-7B-V1.1": "mistralai/Mistral-7B-v0.1",
@@ -52,13 +56,13 @@ finetuned_model_backbone_mapping_dict = {
     "BioMistral/BioMistral-7B": "mistralai/Mistral-7B-v0.1",
     "upaya07/Arithmo2-Mistral-7B": "mistralai/Mistral-7B-v0.1",
     
-    "meta-llama/Llama-2-7b-chat-hf": "meta-llama/Llama-2-7b",
-    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
-    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
-    
     "mistralai/Mistral-7B-Instruct-v0.2": "mistralai/Mistral-7B-v0.1",
     "TIGER-Lab/MAmmoTH2-7B": "mistralai/Mistral-7B-v0.1",
     "Nondzu/Mistral-7B-codealpaca-lora": "mistralai/Mistral-7B-v0.1", 
+    
+    "TIGER-Lab/MAmmoTH-7B": "meta-llama/Llama-2-7b",
+    "mrm8488/llama-2-coder-7b": "meta-llama/Llama-2-7b",
+    "elyza/ELYZA-japanese-Llama-2-7b": "meta-llama/Llama-2-7b",
 }
 
 def print_lambda_distribution(lambdas, model_names):
@@ -75,6 +79,22 @@ def print_lambda_distribution(lambdas, model_names):
         print(f"{name}: {lambda_val:.6f}")
     print(f"Sum of lambdas: {lambdas_sum:.6f}")
 
+def log_resource_usage(logger):
+    # GPU使用量を取得
+    try:
+        gpus = GPUtil.getGPUs()
+        gpu_memory = max([gpu.memoryUsed for gpu in gpus]) if gpus else 0
+    except:
+        gpu_memory = 0
+    
+    # RAM使用量を取得
+    process = psutil.Process()
+    ram_usage = process.memory_info().rss / (1024 * 1024 * 1024)  # GBに変換
+    
+    logger.info(f"Current RAM usage: {ram_usage:.2f} GB")
+    logger.info(f"Current GPU memory usage: {gpu_memory:.2f} MB")
+    
+    return ram_usage, gpu_memory
 
 def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list, merge_task_names: list, models_to_merge: list, trainers: list, logger: logging.Logger,
                           merging_method: MergingMethod, tokenizers: list):
@@ -90,331 +110,379 @@ def get_merge_performance(args: argparse.Namespace, finetuned_model_names: list,
     :param tokenizers: list of tokenizers
     :return:
     """
+    start_time = datetime.now()
+    max_ram_usage = 0
+    max_gpu_memory = 0
     
-    logger.info(f"configuration is {args}")
-
     try:
-        pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16, load_in_4bit=True)
-        pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
-        pretrained_model.gradient_checkpointing_enable()
-    except:
-        if "meta-llama/Llama-2-7b" in args.pretrained_model_name:
-            from transformers import LlamaForCausalLM, LlamaTokenizer
-            pretrained_model = LlamaForCausalLM.from_pretrained("/work/gb20/b20042/model_merging/llama2")
-            pretrained_tokenizer = LlamaTokenizer.from_pretrained("/work/gb20/b20042/model_merging/llama2")
-            pretrained_model.gradient_checkpointing_enable()
-        else:
-            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16, load_in_4bit=True)
+        logger.info(f"configuration is {args}")
+
+        try:
+            if "meta-llama/Llama-2-7b" in args.pretrained_model_name:
+                from transformers import LlamaForCausalLM, LlamaTokenizer
+                pretrained_model = LlamaForCausalLM.from_pretrained(os.path.join(cache_dir, args.pretrained_model_name))
+                pretrained_tokenizer = LlamaTokenizer.from_pretrained(os.path.join(cache_dir, args.pretrained_model_name))
+            else: 
+                pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name), device_map="cpu", torch_dtype=torch.bfloat16)
+                pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, args.pretrained_model_name))
+        except:
+            pretrained_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir, device_map="cpu", torch_dtype=torch.bfloat16)
             pretrained_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=args.pretrained_model_name, cache_dir=cache_dir)
-            pretrained_model.gradient_checkpointing_enable()
-    
-    
-    if "GAIR/Abel-7B-002" in finetuned_model_names:
-        pad_token = "<extra_id_32001><extra_id_32002><extra_id_32003><extra_id_32004><extra_id_32005><extra_id_32006><extra_id_32007><extra_id_32008><extra_id_32009><extra_id_32010><extra_id_32011><extra_id_32012><extra_id_32013><extra_id_32014><extra_id_32015><extra_id_32016><extra_id_32017><extra_id_32018><extra_id_32019><extra_id_32020><extra_id_32021><extra_id_32022><extra_id_32023><extra_id_32024><extra_id_32025><extra_id_32026><extra_id_32027><extra_id_32028><extra_id_32029><extra_id_32030><extra_id_32031><pad>"
-        smart_tokenizer_and_embedding_resize(
-            special_tokens_dict=dict(pad_token=pad_token),
-            model=pretrained_model,
-            tokenizer=pretrained_tokenizer,
-        )
-        for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+
+        
+        
+        if "GAIR/Abel-7B-002" in finetuned_model_names:
+            pad_token = "<extra_id_32001><extra_id_32002><extra_id_32003><extra_id_32004><extra_id_32005><extra_id_32006><extra_id_32007><extra_id_32008><extra_id_32009><extra_id_32010><extra_id_32011><extra_id_32012><extra_id_32013><extra_id_32014><extra_id_32015><extra_id_32016><extra_id_32017><extra_id_32018><extra_id_32019><extra_id_32020><extra_id_32021><extra_id_32022><extra_id_32023><extra_id_32024><extra_id_32025><extra_id_32026><extra_id_32027><extra_id_32028><extra_id_32029><extra_id_32030><extra_id_32031><pad>"
             smart_tokenizer_and_embedding_resize(
                 special_tokens_dict=dict(pad_token=pad_token),
-                model=finetuned_model,
-                tokenizer=finetuned_tokenizer,
+                model=pretrained_model,
+                tokenizer=pretrained_tokenizer,
             )
-    else:
-        smart_tokenizer_and_embedding_resize(
-            special_tokens_dict=dict(pad_token="[PAD]"),
-            model=pretrained_model,
-            tokenizer=pretrained_tokenizer,
-        )
-        for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+            for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+                smart_tokenizer_and_embedding_resize(
+                    special_tokens_dict=dict(pad_token=pad_token),
+                    model=finetuned_model,
+                    tokenizer=finetuned_tokenizer,
+                )
+        else:
             smart_tokenizer_and_embedding_resize(
                 special_tokens_dict=dict(pad_token="[PAD]"),
-                model=finetuned_model,
-                tokenizer=finetuned_tokenizer,
+                model=pretrained_model,
+                tokenizer=pretrained_tokenizer,
             )
-    
-    # set random seed to guarantee reproducibility
-    set_random_seed(seed=args.seed)
-    merged_model = pretrained_model
-    
-    # visualize task cosine similarities
-    """
-    print(f"Visualizing task cosine similarities...")
-    visualizer = visualize_task_similarities(
-        pretrained_model=merged_model,
-        models=models_to_merge,
-        model_names=args.merge_task_names,
-        save_dir=f"./figs/{args.lambda_strategy}",
-    )
-    """
-    
-    if args.metagpt:
-        print("Start calculating lambdas...")
-        print(f"Lambda_strategy: {args.lambda_strategy}")        
-        
-        if args.lambda_strategy == "metagpt":
-            optimized_lambdas = metagpt(pretrained_model, models_to_merge)
-            print_lambda_distribution(optimized_lambdas, finetuned_model_names)
-        elif args.lambda_strategy == "metagpt_strict":
-            optimized_lambdas = metagpt_strict(pretrained_model, models_to_merge)
-            print_lambda_distribution(optimized_lambdas, finetuned_model_names)
-        else:
-            # ファイル名の生成
-            strategy = WeightingStrategy(args.lambda_strategy)
-            params_name = f"{strategy.value}/{args.optimizer_type}_epochs{args.num_epochs}_lr{args.learning_rate}_sample{args.num_train_samples}"
-            save_dir = f"./lambdas/seed{args.seed}/{'_'.join(merge_task_names)}/{params_name}" 
-            os.makedirs(save_dir, exist_ok=True)
-            model_names_str = '_'.join(sorted([name.split('/')[-1] for name in finetuned_model_names]))
-            initial_lambda_filename = f'initial_lambdas_{strategy.value}_{model_names_str}.csv'
-            optimized_lambda_filename = f'optimized_lambdas_{strategy.value}_{model_names_str}.csv'
-   
-            if args.initial_lambda_filepath is not None:
-                initial_lambda_filepath = args.initial_lambda_filepath
-            else:
-                initial_lambda_filepath = os.path.join(save_dir, initial_lambda_filename)
-            
-            if args.optimized_lambda_filepath is not None:
-                optimized_lambda_filepath = args.optimized_lambda_filepath
-            else:
-                optimized_lambda_filepath = os.path.join(save_dir, optimized_lambda_filename)
-            
-            # 既存のλ値をチェック
-            if os.path.exists(initial_lambda_filepath):
-                print(f"Loading existing lambdas from: {save_dir}")
-                # initial lambdasの読み込み
-                initial_df = pd.read_csv(initial_lambda_filepath)
-                initial_df = initial_df.set_index('model_name').loc[finetuned_model_names].reset_index()
-                initial_lambdas = initial_df['lambda'].values
-            else:    
-                # 新しくλ値を計算
-                if args.lambda_strategy == "metagpt_random" or args.lambda_strategy == "optuna":
-                    # ランダムな値(0-1)を生成
-                    initial_lambdas = np.random.rand(len(models_to_merge))
-                elif args.lambda_strategy == "metagpt_random_normalize":
-                    # ランダムな値を生成し、合計が1になるように正規化
-                    random_values = np.random.rand(len(models_to_merge))
-                    initial_lambdas = random_values / np.sum(random_values)
-                elif args.lambda_strategy == "metagpt_average":
-                    # モデル数で均等に分割
-                    initial_lambdas = np.array([1.0 / len(models_to_merge)] * len(models_to_merge))
-                elif args.lambda_strategy == "metagpt_all_one":
-                    # すべての要素を1.0に設定
-                    initial_lambdas = np.array([1.0] * len(models_to_merge))
-                else:
-                    initial_lambdas = metagpt(pretrained_model, models_to_merge)
-                    
-                # initial lambdasの保存
-                if args.lambda_strategy != "optuna":
-                    initial_df = pd.DataFrame({
-                        'model_name': finetuned_model_names,
-                        'lambda': initial_lambdas
-                    })
-                    initial_df.to_csv(initial_lambda_filepath, index=False)
-            
-            if os.path.exists(optimized_lambda_filepath):
-                # optimized lambdasの読み込み
-                optimized_df = pd.read_csv(optimized_lambda_filepath)
-                if args.lambda_strategy == "optuna":
-                    # lambdasカラムから直接リストを取得
-                    lambda_str = optimized_df.loc[0, 'lambdas']  
-                    # 文字列からリストに変換
-                    optimized_lambdas = eval(lambda_str)
-                else:
-                    # lossが最小のepochを見つける
-                    min_loss_epoch = optimized_df['loss'].idxmin()
-                    # そのepochのλ値を取得
-                    lambda_str = optimized_df.loc[min_loss_epoch, 'lambdas']
-                    # 文字列からリストに変換
-                    optimized_lambdas = eval(lambda_str)
-            else:
-                optimizer = LambdaOptimizerCrossEntropy(
-                    seed=args.seed,
-                    pretrained_model=pretrained_model,
-                    pretrained_model_name=args.pretrained_model_name,
-                    models_to_merge=models_to_merge,
-                    tokenizers=tokenizers,
-                    initial_lambdas=initial_lambdas,
-                    num_epochs=args.num_epochs,
-                    learning_rate=args.learning_rate,
-                    num_train_samples=args.num_train_samples,
-                    optimizer_type=args.optimizer_type,
-                    logger=logger,
-                    params_name=params_name,
-                    finetuned_model_names=finetuned_model_names,
-                    optimized_lambda_filepath=optimized_lambda_filepath
+            for finetuned_model, finetuned_tokenizer in zip(models_to_merge, tokenizers):
+                finetuned_tokenizer = AutoTokenizer.from_pretrained(
+                    pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name)
                 )
-                
-                if args.lambda_strategy == "optuna":
-                   optimized_lambdas = optimizer.optimize_with_optuna()
-                else:
-                   optimized_lambdas = optimizer.optimize()
+                smart_tokenizer_and_embedding_resize(
+                    special_tokens_dict=dict(pad_token="[PAD]"),
+                    model=finetuned_model,
+                    tokenizer=finetuned_tokenizer,
+                )
         
-            #print("\nInitial lambdas:")
-            #print_lambda_distribution(initial_lambdas, finetuned_model_names)
-        print("\nOptimized lambdas:")
-        print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+        # set random seed to guarantee reproducibility
+        set_random_seed(seed=args.seed)
+        merged_model = pretrained_model
         
-        # optimized_lambdasの値をargs.gradationに設定
-        args.gradation1 = float(optimized_lambdas[0])
-        args.gradation2 = float(optimized_lambdas[1])
-        args.gradation3 = float(optimized_lambdas[2])
-    """        
-    if args.single_exclusive_model:
-        masked_param_dicts = mask_model_weights_exclusive(finetuned_models=models_to_merge, pretrained_model=merged_model, 
-                                                        exclude_param_names_regex=[], weight_format=args.weight_format,
-                                                        weight_mask_rate=args.weight_mask_rate,
-                                                        use_weight_rescale=args.use_weight_rescale, mask_strategy=args.mask_strategy) 
-
-        copy_params_to_model(params=masked_param_dicts[0], model=models_to_merge[0])
-        copy_params_to_model(params=masked_param_dicts[1], model=models_to_merge[1])
-        merged_task_vector = TaskVector(pretrained_model=merged_model, finetuned_model=models_to_merge[int(args.subordinate_mask)], exclude_param_names_regex=[])
-        merged_params = merged_task_vector.combine_with_pretrained_model(pretrained_model=merged_model, scaling_coefficient=args.scaling_coefficient)
-        copy_params_to_model(params=merged_params, model=merged_model)
-    else:
-        merged_model = merging_method.get_merged_model(merged_model=merged_model,
-                                                    models_to_merge=models_to_merge,
-                                                    exclude_param_names_regex=[],
-                                                    trainers=trainers,
-                                                    scaling_coefficient=args.scaling_coefficient,
-                                                    nums_fisher_examples=None,
-                                                    fisher_scaling_coefficients=None,
-                                                    normalize_fisher_weight=None,
-                                                    minimal_fisher_weight=None,
-                                                    nums_regmean_examples=None,
-                                                    reduce_non_diagonal_ratio=None,
-                                                    param_value_mask_rate=args.param_value_mask_rate,
-                                                    weight_format=args.weight_format,
-                                                    weight_mask_rates=args.weight_mask_rates,
-                                                    use_weight_rescale=args.use_weight_rescale,
-                                                    mask_strategy=args.mask_strategy,
-                                                    mask_apply_method=args.mask_apply_method,
-                                                    models_use_deepcopy=False,
-                                                    exclusive_dropout=args.exclusive_dropout,
-                                                    gradation_coefficients=optimized_lambdas)
-
-
-    save_instruct_model_path = save_math_model_path = save_code_model_path = save_jp_model_path = None
-    if args.merge_instruct:
-        save_instruct_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/instruct/{args.dataset_name}/{args.save_model_name}"
-    if args.merge_math:
-        save_math_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math/{args.dataset_name}/{args.save_model_name}"
-    if args.merge_code:
-        save_code_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/code/{args.dataset_name}/{args.save_model_name}"
-    if args.merge_jp:
-        save_jp_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/jp/{args.dataset_name}/{args.save_model_name}"
-
-    # since the tokenizers of different tasks are different, we need to save them (together with the model) separately
-    save_model_paths = [save_instruct_model_path, save_math_model_path, save_code_model_path, save_jp_model_path]
-    index = 0
-    for save_model_path in save_model_paths:
-        if save_model_path==save_instruct_model_path:
-            continue
+        # visualize task cosine similarities
+        """
+        print(f"Visualizing task cosine similarities...")
+        visualizer = visualize_task_similarities(
+            pretrained_model=merged_model,
+            models=models_to_merge,
+            model_names=args.merge_task_names,
+            save_dir=f"./figs/{args.lambda_strategy}",
+        )
+        """
         
-        if save_model_path is not None:
-            os.makedirs(os.path.dirname(save_model_path), exist_ok=True)
-            logger.info(f"saving models at {save_model_path}...")
-            merged_model.save_pretrained(save_directory=save_model_path)
-            tokenizers[index].save_pretrained(save_directory=save_model_path)
-            index += 1
-            logger.info(f"models are saved")
-
-                
-        if args.dataset_name=="gsm8k" and save_model_path==save_math_model_path:
-            logger.info(f"evaluating merged model on math task...")
-            delete_all_models()
-            aggressive_clear_gpu_memory()
-            llm = create_llm(finetuned_model_name=save_math_model_path, pretrained_model_name=args.pretrained_model_name,
-                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
-                            just_inference=True, save_model_path=None)
-            try:
-                test_data_path = "math_code_data/gsm8k_test.jsonl"
-                test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                        start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path, 
-                        comp_file_path=args.comp_file_path, model_name=args.save_model_name)
-            except Exception as e:
-                logger.error(f"gsm8k評価エラー: {str(e)}")
-            ""
-            try:
-                test_data_path = "math_code_data/MATH_test.jsonl"
-                test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                                    start_index=args.start_index, end_index=args.end_index, save_model_path=None,
-                                    comp_file_path= args.comp_file_path, model_name=args.save_model_name)
-            except Exception as e:
-                logger.error(f"MATH評価エラー: {str(e)}")
-            ""
-
-        elif args.dataset_name=="mbpp" and save_model_path==save_code_model_path:
-            logger.info(f"evaluating merged model on code task...")
-            delete_all_models()
-            aggressive_clear_gpu_memory()
-            llm = create_llm(finetuned_model_name=save_code_model_path, pretrained_model_name=args.pretrained_model_name,
-                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
-                            just_inference=True, save_model_path=None)
-            ""
-            try:
-                save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/human_eval/{args.save_model_name}"
-                os.makedirs(save_gen_results_folder, exist_ok=True)
-                test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
-                                save_model_path=None, save_gen_results_folder=save_gen_results_folder)
-            except Exception as e:
-                logger.error(f"human_eval評価エラー: {str(e)}")
-            ""
-            try:
-                save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/mbpp/{args.save_model_name}"
-                os.makedirs(save_gen_results_folder, exist_ok=True)
-                test_data_path = "math_code_data/mbpp.test.jsonl"
-                test_mbpp(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                        start_index=args.start_index, end_index=args.end_index,
-                        save_model_path=None, save_gen_results_folder=save_gen_results_folder)
-            except Exception as e:
-                logger.error(f"mbpp評価エラー: {str(e)}")
+        if args.metagpt:
+            print("Start calculating lambdas...")
+            ram_usage, gpu_memory = log_resource_usage(logger)
+            max_ram_usage = max(max_ram_usage, ram_usage)
+            max_gpu_memory = max(max_gpu_memory, gpu_memory)
             
-        
-        elif args.dataset_name=="alpaca_eval" and save_model_path==save_instruct_model_path:
-            logger.info(f"evaluating merged model on instruct task...")
-            delete_all_models()
-            aggressive_clear_gpu_memory()
-            llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,
-                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
-                            just_inference=True, save_model_path=None)
-            save_gen_results_folder = f"./save_gen_instruct_responses_results/{'_'.join(merge_task_names)}/alpaca_eval/{args.save_model_name}"
-            os.makedirs(save_gen_results_folder, exist_ok=True)
-            try:
-                test_alpaca_eval(llm=llm, finetuned_model_name=save_instruct_model_path,
-                                args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
-                                save_model_path=None, save_gen_results_folder=save_gen_results_folder)
-            except Exception as e:
-                logger.error(f"AlpacaEval評価エラー: {str(e)}")
-
-        elif args.dataset_name=="ja_mgsm" and save_model_path==save_jp_model_path:
-            logger.info(f"evaluating merged model on ja_mgsm task...")
-            delete_all_models()
-            aggressive_clear_gpu_memory()
-            llm = create_llm(finetuned_model_name=save_jp_model_path, pretrained_model_name=args.pretrained_model_name,
-                            args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
-                            just_inference=True, save_model_path=None)
-            try:
-                test_data_path = "juletxara/mgsm"
-                test_ja_mgsm(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
-                        start_index=args.start_index, end_index=args.end_index, 
-                        comp_file_path=args.comp_file_path, model_name=args.save_model_name, drop_rate=args.weight_mask_rate,
-                        log_resp_path=args.log_resp_path)
-            except Exception as e:
-                logger.error(f"ja_mgsm評価エラー: {str(e)}")
+            print(f"Lambda_strategy: {args.lambda_strategy}")        
+            
+            if args.lambda_strategy == "metagpt":
+                optimized_lambdas = metagpt(pretrained_model, models_to_merge)
+                print_lambda_distribution(optimized_lambdas, finetuned_model_names)
                 
-        if save_model_path is not None:
-            shutil.rmtree(save_model_path, ignore_errors=True)
+                # lambdasをCSVファイルに保存
+                os.makedirs("./lambdas", exist_ok=True)
+                df = pd.DataFrame({
+                    'model_name': finetuned_model_names,
+                    'lambda': optimized_lambdas
+                })
+                df.to_csv('./lambdas/initial_lambdas_metagpt.csv', index=False)
+            elif args.lambda_strategy == "metagpt_strict":
+                optimized_lambdas = metagpt_strict(pretrained_model, models_to_merge)
+                print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+            else:
+                # ファイル名の生成
+                strategy = WeightingStrategy(args.lambda_strategy)
+                params_name = f"{strategy.value}/{args.optimizer_type}_epochs{args.num_epochs}_lr{args.learning_rate}_sample{args.num_train_samples}"
+                save_dir = f"./lambdas/seed{args.seed}/{'_'.join(merge_task_names)}/{params_name}" 
+                os.makedirs(save_dir, exist_ok=True)
+                model_names_str = '_'.join(sorted([name.split('/')[-1] for name in finetuned_model_names]))
+                initial_lambda_filename = f'initial_lambdas_{strategy.value}_{model_names_str}.csv'
+                optimized_lambda_filename = f'optimized_lambdas_{strategy.value}_{model_names_str}.csv'
+       
+                if args.initial_lambda_filepath is not None:
+                    initial_lambda_filepath = args.initial_lambda_filepath
+                else:
+                    initial_lambda_filepath = os.path.join(save_dir, initial_lambda_filename)
+                
+                if args.optimized_lambda_filepath is not None:
+                    optimized_lambda_filepath = args.optimized_lambda_filepath
+                else:
+                    optimized_lambda_filepath = os.path.join(save_dir, optimized_lambda_filename)
+                
+                # 既存のλ値をチェック
+                if os.path.exists(initial_lambda_filepath):
+                    print(f"Loading existing lambdas from: {save_dir}")
+                    # initial lambdasの読み込み
+                    initial_df = pd.read_csv(initial_lambda_filepath)
+                    initial_df = initial_df.set_index('model_name').loc[finetuned_model_names].reset_index()
+                    initial_lambdas = initial_df['lambda'].values
+                else:    
+                    # 新しくλ値を計算
+                    if args.lambda_strategy == "metagpt_random" or args.lambda_strategy == "optuna":
+                        # ランダムな値(0-1)を生成
+                        initial_lambdas = np.random.rand(len(models_to_merge))
+                    elif args.lambda_strategy == "metagpt_random_normalize":
+                        # ランダムな値を生成し、合計が1になるように正規化
+                        random_values = np.random.rand(len(models_to_merge))
+                        initial_lambdas = random_values / np.sum(random_values)
+                    elif args.lambda_strategy == "metagpt_average":
+                        # モデル数で均等に分割
+                        initial_lambdas = np.array([1.0 / len(models_to_merge)] * len(models_to_merge))
+                    elif args.lambda_strategy == "metagpt_all_one":
+                        # すべての要素を1.0に設定
+                        initial_lambdas = np.array([1.0] * len(models_to_merge))
+                    else:
+                        initial_lambdas = metagpt(pretrained_model, models_to_merge)
+                        
+                    # initial lambdasの保存
+                    if args.lambda_strategy != "optuna":
+                        initial_df = pd.DataFrame({
+                            'model_name': finetuned_model_names,
+                            'lambda': initial_lambdas
+                        })
+                        initial_df.to_csv(initial_lambda_filepath, index=False)
+                
+                if os.path.exists(optimized_lambda_filepath):
+                    # optimized lambdasの読み込み
+                    optimized_df = pd.read_csv(optimized_lambda_filepath)
+                    if args.lambda_strategy == "optuna":
+                        # lambdasカラムから直接リストを取得
+                        lambda_str = optimized_df.loc[0, 'lambdas']  
+                        # 文字列からリストに変換
+                        optimized_lambdas = eval(lambda_str)
+                    else:
+                        # lossが最小のepochを見つける
+                        min_loss_epoch = optimized_df['loss'].idxmin()
+                        # そのepochのλ値を取得
+                        lambda_str = optimized_df.loc[min_loss_epoch, 'lambdas']
+                        # 文字列からリストに変換
+                        optimized_lambdas = eval(lambda_str)
+                else:
+                    print("Optimizing lambdas...", flush=True)
+                    optimizer = LambdaOptimizerCrossEntropy(
+                        seed=args.seed,
+                        pretrained_model=pretrained_model,
+                        pretrained_model_name=args.pretrained_model_name,
+                        models_to_merge=models_to_merge,
+                        tokenizers=tokenizers,
+                        initial_lambdas=initial_lambdas,
+                        num_epochs=args.num_epochs,
+                        learning_rate=args.learning_rate,
+                        num_train_samples=args.num_train_samples,
+                        optimizer_type=args.optimizer_type,
+                        logger=logger,
+                        params_name=params_name,
+                        finetuned_model_names=finetuned_model_names,
+                        optimized_lambda_filepath=optimized_lambda_filepath
+                    )
+                    
+                    if args.lambda_strategy == "optuna":
+                       optimized_lambdas = optimizer.optimize_with_optuna()
+                    else:
+                       optimized_lambdas = optimizer.optimize()
+            
+                #print("\nInitial lambdas:")
+                #print_lambda_distribution(initial_lambdas, finetuned_model_names)
+            print("\nOptimized lambdas:")
+            print_lambda_distribution(optimized_lambdas, finetuned_model_names)
+        
 
-    del merged_model, tokenizers
-    torch.cuda.empty_cache()    
-    
-    for save_model_path in save_model_paths:
-        if save_model_path is not None:
-            shutil.rmtree(save_model_path, ignore_errors=True)
-    logger.info(f"inference of merging method {args.merging_method_name} is completed")
-    """
+            # optimized_lambdasの値をargs.gradationに設定
+            args.gradation1 = float(optimized_lambdas[0])
+            args.gradation2 = float(optimized_lambdas[1])
+            args.gradation3 = float(optimized_lambdas[2])
+                
+        if args.single_exclusive_model:
+            masked_param_dicts = mask_model_weights_exclusive(finetuned_models=models_to_merge, pretrained_model=merged_model, 
+                                                            exclude_param_names_regex=[], weight_format=args.weight_format,
+                                                            weight_mask_rate=args.weight_mask_rate,
+                                                            use_weight_rescale=args.use_weight_rescale, mask_strategy=args.mask_strategy) 
+
+            copy_params_to_model(params=masked_param_dicts[0], model=models_to_merge[0])
+            copy_params_to_model(params=masked_param_dicts[1], model=models_to_merge[1])
+            merged_task_vector = TaskVector(pretrained_model=merged_model, finetuned_model=models_to_merge[int(args.subordinate_mask)], exclude_param_names_regex=[])
+            merged_params = merged_task_vector.combine_with_pretrained_model(pretrained_model=merged_model, scaling_coefficient=args.scaling_coefficient)
+            copy_params_to_model(params=merged_params, model=merged_model)
+        else:
+            merged_model = merging_method.get_merged_model(merged_model=merged_model,
+                                                        models_to_merge=models_to_merge,
+                                                        exclude_param_names_regex=[],
+                                                        trainers=trainers,
+                                                        scaling_coefficient=args.scaling_coefficient,
+                                                        nums_fisher_examples=None,
+                                                        fisher_scaling_coefficients=None,
+                                                        normalize_fisher_weight=None,
+                                                        minimal_fisher_weight=None,
+                                                        nums_regmean_examples=None,
+                                                        reduce_non_diagonal_ratio=None,
+                                                        param_value_mask_rate=args.param_value_mask_rate,
+                                                        weight_format=args.weight_format,
+                                                        weight_mask_rates=args.weight_mask_rates,
+                                                        use_weight_rescale=args.use_weight_rescale,
+                                                        mask_strategy=args.mask_strategy,
+                                                        mask_apply_method=args.mask_apply_method,
+                                                        models_use_deepcopy=False,
+                                                        exclusive_dropout=args.exclusive_dropout,
+                                                        gradation_coefficients=optimized_lambdas)
+
+        # save_instruct_model_path = save_math_model_path = save_code_model_path = save_jp_model_path = None
+        # if args.merge_instruct:
+        #     save_instruct_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/instruct/{args.dataset_name}/{args.save_model_name}"
+        # if args.merge_math:
+        #     save_math_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math/{args.dataset_name}/{args.save_model_name}"
+        # if args.merge_code:
+        #     save_code_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/code/{args.dataset_name}/{args.save_model_name}"
+        # if args.merge_jp:
+        #     save_jp_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/jp/{args.dataset_name}/{args.save_model_name}"
+
+        save_instruct_model_path = save_math_model_path = save_code_model_path = save_jp_model_path = None
+        if args.llama2_math:
+            save_math_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/math/{args.dataset_name}/{args.save_model_name}"
+        if args.llama2_code:
+            save_code_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/code/{args.dataset_name}/{args.save_model_name}"
+        if args.llama2_jp:
+            save_jp_model_path = f"./save_merge_models/{'_'.join(merge_task_names)}/jp/{args.dataset_name}/{args.save_model_name}"
+
+        # since the tokenizers of different tasks are different, we need to save them (together with the model) separately
+        save_model_paths = [save_instruct_model_path, save_math_model_path, save_code_model_path, save_jp_model_path]
+        index = 0
+        for save_model_path in save_model_paths:
+            if save_model_path==save_instruct_model_path:
+                continue
+            
+            if save_model_path is not None:
+                os.makedirs(os.path.dirname(save_model_path), exist_ok=True)
+                logger.info(f"saving models at {save_model_path}...")
+                merged_model.save_pretrained(save_directory=save_model_path)
+                tokenizers[index].save_pretrained(save_directory=save_model_path)
+                index += 1
+                logger.info(f"models are saved")
+
+                
+            if args.dataset_name=="gsm8k" and save_model_path==save_math_model_path:
+                logger.info(f"evaluating merged model on math task...")
+                delete_all_models()
+                aggressive_clear_gpu_memory()
+                llm = create_llm(finetuned_model_name=save_math_model_path, pretrained_model_name=args.pretrained_model_name,
+                                args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                                just_inference=True, save_model_path=None)
+                try:
+                    test_data_path = "math_code_data/gsm8k_test.jsonl"
+                    test_gsm8k(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, save_model_path=save_model_path, 
+                            comp_file_path=args.comp_file_path, model_name=args.save_model_name)
+                except Exception as e:
+                    logger.error(f"gsm8k評価エラー: {str(e)}")
+                """
+                try:
+                    test_data_path = "math_code_data/MATH_test.jsonl"
+                    test_hendrycks_math(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                                        start_index=args.start_index, end_index=args.end_index, save_model_path=None,
+                                        comp_file_path= args.comp_file_path, model_name=args.save_model_name)
+                except Exception as e:
+                    logger.error(f"MATH評価エラー: {str(e)}")
+                """
+
+            elif args.dataset_name=="mbpp" and save_model_path==save_code_model_path:
+                logger.info(f"evaluating merged model on code task...")
+                delete_all_models()
+                aggressive_clear_gpu_memory()
+                llm = create_llm(finetuned_model_name=save_code_model_path, pretrained_model_name=args.pretrained_model_name,
+                                args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                                just_inference=True, save_model_path=None)
+                """"
+                try:
+                    save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/human_eval/{args.save_model_name}"
+                    os.makedirs(save_gen_results_folder, exist_ok=True)
+                    test_human_eval(llm=llm, args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
+                                    save_model_path=None, save_gen_results_folder=save_gen_results_folder)
+                except Exception as e:
+                    logger.error(f"human_eval評価エラー: {str(e)}")
+                """
+                try:
+                    save_gen_results_folder = f"./save_gen_codes_results/{'_'.join(merge_task_names)}/mbpp/{args.save_model_name}"
+                    os.makedirs(save_gen_results_folder, exist_ok=True)
+                    test_data_path = "math_code_data/mbpp.test.jsonl"
+                    test_mbpp(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index,
+                            save_model_path=None, save_gen_results_folder=save_gen_results_folder)
+                except Exception as e:
+                    logger.error(f"mbpp評価エラー: {str(e)}")
+                
+            elif args.dataset_name=="alpaca_eval" and save_model_path==save_instruct_model_path:
+                logger.info(f"evaluating merged model on instruct task...")
+                delete_all_models()
+                aggressive_clear_gpu_memory()
+                llm = create_llm(finetuned_model_name=save_instruct_model_path, pretrained_model_name=args.pretrained_model_name,
+                                args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                                just_inference=True, save_model_path=None)
+                save_gen_results_folder = f"./save_gen_instruct_responses_results/{'_'.join(merge_task_names)}/alpaca_eval/{args.save_model_name}"
+                os.makedirs(save_gen_results_folder, exist_ok=True)
+                try:
+                    test_alpaca_eval(llm=llm, finetuned_model_name=save_instruct_model_path,
+                                    args=args, logger=logger, start_index=args.start_index, end_index=args.end_index,
+                                    save_model_path=None, save_gen_results_folder=save_gen_results_folder)
+                except Exception as e:
+                    logger.error(f"AlpacaEval評価エラー: {str(e)}")
+
+            elif args.dataset_name=="ja_mgsm" and save_model_path==save_jp_model_path:
+                logger.info(f"evaluating merged model on ja_mgsm task...")
+                delete_all_models()
+                aggressive_clear_gpu_memory()
+                llm = create_llm(finetuned_model_name=save_jp_model_path, pretrained_model_name=args.pretrained_model_name,
+                                args=args, logger=logger, tensor_parallel_size=args.tensor_parallel_size,
+                                just_inference=True, save_model_path=None)
+                try:
+                    test_data_path = "juletxara/mgsm"
+                    test_ja_mgsm(llm=llm, test_data_path=test_data_path, args=args, logger=logger,
+                            start_index=args.start_index, end_index=args.end_index, 
+                            comp_file_path=args.comp_file_path, model_name=args.save_model_name, drop_rate=args.weight_mask_rate,
+                            log_resp_path=args.log_resp_path)
+                except Exception as e:
+                    logger.error(f"ja_mgsm評価エラー: {str(e)}")
+                    
+            if save_model_path is not None:
+                shutil.rmtree(save_model_path, ignore_errors=True)
+
+        del merged_model, tokenizers
+        torch.cuda.empty_cache()    
+        
+        #for save_model_path in save_model_paths:
+        #    if save_model_path is not None:
+        #        shutil.rmtree(save_model_path, ignore_errors=True)
+        #ogger.info(f"inference of merging method {args.merging_method_name} is completed")
+        
+
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        
+        logger.info("=== Resource Usage Summary ===")
+        logger.info(f"Total execution time: {duration}")
+        logger.info(f"Peak RAM usage: {max_ram_usage:.2f} GB")
+        logger.info(f"Peak GPU memory usage: {max_gpu_memory:.2f} MB")
+        
+        # CSVファイルに記録
+        results_dir = f"./resource_usage_logs/{args.lambda_strategy}"
+        os.makedirs(results_dir, exist_ok=True)
+        
+        results_file = os.path.join(results_dir, "resource_usage.csv")
+        is_new_file = not os.path.exists(results_file)
+        
+        with open(results_file, 'a') as f:
+            if is_new_file:
+                f.write("seed,duration_seconds,max_ram_gb,max_gpu_mb,timestamp,model_names,num_epochs,learning_rate,num_train_samples,optimizer_type\n")
+            
+            f.write(f"{args.seed},{duration.total_seconds():.1f},{max_ram_usage:.2f},{max_gpu_memory:.2f},{end_time},{'+'.join(merge_task_names)}")
+            f.write(f",{args.num_epochs},{args.learning_rate},{args.num_train_samples},{args.optimizer_type}\n")
 
 parser = argparse.ArgumentParser("Interface for merging LLMs")
 parser.add_argument("--merge_jp1", action="store_true", default=False, help="whether to merge instruct model")
@@ -427,6 +495,9 @@ parser.add_argument("--merge_math3", action="store_true", default=False, help="w
 parser.add_argument("--merge_instruct", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merge_math", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merge_code", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--llama2_math", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--llama2_code", action="store_true", default=False, help="whether to merge math model")
+parser.add_argument("--llama2_jp", action="store_true", default=False, help="whether to merge math model")
 parser.add_argument("--merging_method_name", type=str, default="average_merging", help="name of the method to merge models",
                     choices=["average_merging", "task_arithmetic", "mask_merging", "ties_merging"])
 parser.add_argument("--scaling_coefficient", type=float, default=1.0, help="scaling coefficient to merge the task vector")
@@ -487,10 +558,10 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.DEBUG)
 
-    assert sum([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp]) >= 2, "should merge two tasks at least!"
+    assert sum([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp, args.llama2_math, args.llama2_code, args.llama2_jp]) >= 2, "should merge two tasks at least!"
     finetuned_model_names = []
     merge_task_names = []
-    for merge_flag, task_name in zip([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp], ["math1", "math2", "math3", "jp1", "jp2", "bio", "instruct", "math", "code", "jp"]):
+    for merge_flag, task_name in zip([args.merge_math1, args.merge_math2, args.merge_math3, args.merge_jp1, args.merge_jp2, args.merge_bio, args.merge_instruct, args.merge_math, args.merge_code, args.merge_jp, args.llama2_math, args.llama2_code, args.llama2_jp], ["math1", "math2", "math3", "jp1", "jp2", "bio", "instruct", "math", "code", "jp", "llama2_math", "llama2_code", "llama2_jp"]):
         if merge_flag:
             finetuned_model_names.append(task_model_mapping_dict[task_name])
             merge_task_names.append(task_name)
@@ -543,9 +614,10 @@ if __name__ == "__main__":
     finetuned_tokenizers = []
     merging_method = MergingMethod(merging_method_name=args.merging_method_name)
     for finetuned_model_name in finetuned_model_names:
-        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.bfloat16, load_in_4bit=True)
-        finetuned_tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name),)
-        finetuned_model.gradient_checkpointing_enable()
+        finetuned_model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name), device_map="cpu", torch_dtype=torch.float16)
+        finetuned_tokenizer = AutoTokenizer.from_pretrained(
+            pretrained_model_name_or_path=os.path.join(cache_dir, finetuned_model_name)
+        )
         models_to_merge.append(finetuned_model)
         finetuned_tokenizers.append(finetuned_tokenizer)
 

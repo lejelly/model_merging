@@ -9,6 +9,16 @@ accelerate
 jsonlines
 Fraction
 ninja
-flash-attn
 fasttext
 matplotlib
+wandb
+optuna
+psutil
+memory_profiler
+scipy
+seaborn
+umap
+cvxpy
+sentencepiece
+huggingface_hub
+GPUtil
