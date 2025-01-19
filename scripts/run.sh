@@ -8,16 +8,12 @@ SEED=( 0 )
 DATASET=( "gsm8k" )
 INTERVAL=10
 
-gpu_id=0
 for dataset in ${DATASET[@]}; do
     for seed in ${SEED[@]}; do
         for strategy in ${STRATEGY[@]}; do
-            export GPU_ID=$gpu_id
-            nohup bash scripts/meta_gpt.sh $dataset $seed $strategy $GPU_ID &
-            
-            # GPUを0-7の間でローテーション
-            gpu_id=$((($gpu_id + 1) % 8))
-            
+
+            bash scripts/meta_gpt.sh $dataset $seed $strategy 
+        
         done
     done
 done

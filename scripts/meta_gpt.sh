@@ -1,12 +1,12 @@
 #!/bin/bash
 
-source import-env.sh .env
+source import-env.sh .lambda_env
 
 DATASETNAME=$1
 SEED=$2
 MERGE_METHOD=task_arithmetic
 STRATEGY=$3
-GPU_ID=$4
+
 
 COMP_FILE_PATH=./results_metagpt/${SEED}/llama2_math_llama2_code_llama2_jp/${STRATEGY}/${DATASETNAME}.txt
 LOG_RESP_PATH=./results_metagpt/${SEED}/llama2_math_llama2_code_llama2_jp/${STRATEGY}/${DATASETNAME}/json_logs/${STRATEGY}.json
@@ -15,13 +15,13 @@ LOG_RESP_PATH=./results_metagpt/${SEED}/llama2_math_llama2_code_llama2_jp/${STRA
 cd $PATH_TO_WORKING_DIR
 #source work/bin/activate
 source work/bin/activate
-huggingface-cli login --token $HUGGINGFACE_TOKEN
+huggingface-cli login --token $HUGGINGFACE_TOKEN --add-to-git-credential
 
 #INITIAL_LAMBDA_FILEPATH="/home/ubuntu/model_merging/lambdas/initial_lambdas_metagpt_optimize_MAmmoTH2-7B_Mistral-7B-codealpaca-lora_shisa-gamma-7b-v1.csv"
 #OPTIMIZED_LAMBDA_FILEPATH="/home/ubuntu/model_merging/lambdas/seed0/llama2_math_llama2_code_llama2_jp/metagpt_all_one/adam_epochs10_lr0.001_sample4/initial_lambdas_metagpt_all_one_ELYZA-japanese-Llama-2-7b_MAmmoTH-7B_llama-2-coder-7b.csv"
 RUN_NAME=llama2_seed${SEED}_${STRATEGY}_${DATASETNAME}_adam_epochs10_lr0.001_sample4
 
-CUDA_VISIBLE_DEVICES=${GPU_ID} python3 merge_llms_instruct_math_code.py \
+python merge_llms_instruct_math_code.py \
     --seed $SEED \
     --llama2_math --llama2_code --llama2_jp \
     --merging_method_name $MERGE_METHOD \
