@@ -42,7 +42,10 @@ def get_cosine_schedule_with_warmup(
 ###############################################################################
 # 以下はサンプルの読み込み関数 (データセット)
 ###############################################################################
-def load_gsm8k_data(path="math_code_data/gsm8k.train.jsonl", num_samples=10, seed=42):
+def load_gsm8k_data(path="math_code_data/gsm8k.train.jsonl", ratio=1.0, seed=42):
+    """
+    @param ratio: データセットから使用する割合（0-100）
+    """
     data = []
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -53,11 +56,18 @@ def load_gsm8k_data(path="math_code_data/gsm8k.train.jsonl", num_samples=10, see
                 })
     except:
         pass
+    
     random.seed(seed)
     random.shuffle(data)
+    
+    # ratioに基づいてデータを抽出
+    num_samples = int(len(data) * ratio / 100.0)
     return data[:num_samples]
 
-def load_mbpp_data(path="math_code_data/mbpp.train.jsonl", num_samples=10, seed=42):
+def load_mbpp_data(path="math_code_data/mbpp.train.jsonl", ratio=1.0, seed=42):
+    """
+    @param ratio: データセットから使用する割合（0-100）
+    """
     data = []
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -68,11 +78,18 @@ def load_mbpp_data(path="math_code_data/mbpp.train.jsonl", num_samples=10, seed=
                 })
     except:
         pass
+    
     random.seed(seed)
     random.shuffle(data)
+    
+    # ratioに基づいてデータを抽出
+    num_samples = int(len(data) * ratio / 100.0)
     return data[:num_samples]
 
-def load_ja_mgsm_data(path="math_code_data/ja_mgsm.train.jsonl", num_samples=10, seed=42):
+def load_ja_mgsm_data(path="math_code_data/ja_mgsm.train.jsonl", ratio=1.0, seed=42):
+    """
+    @param ratio: データセットから使用する割合（0-100）
+    """
     data = []
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -84,8 +101,12 @@ def load_ja_mgsm_data(path="math_code_data/ja_mgsm.train.jsonl", num_samples=10,
                 })
     except:
         pass
+    
     random.seed(seed)
     random.shuffle(data)
+    
+    # ratioに基づいてデータを抽出
+    num_samples = max(int(len(data) * ratio / 100.0), 1)
     return data[:num_samples]
 
 
@@ -222,7 +243,7 @@ class LambdaOptimizerCrossEntropy:
         num_epochs: int = 10,
         learning_rate: float = 0.001,
         batch_size: int = 1,
-        num_train_samples: int = 4,
+        num_train_ratio: int = None,
         optimizer_type: str = "adam",
         scheduler_type: str = "cosine",
         warmup_steps: int = 0,
@@ -276,7 +297,13 @@ class LambdaOptimizerCrossEntropy:
 
         # 5) 訓練データ (GSM8K, MBPP, ja-MGSM) の読み込み
         print("Loading training data...")
-        self.load_training_data(num_train_samples)
+        self.load_training_data(num_train_ratio)
+        
+        # データサイズのロギング
+        if self.logger:
+            self.logger.info(f"GSM8K data size: {len(self.gsm8k_data) if hasattr(self, 'gsm8k_data') else 0}")
+            self.logger.info(f"MBPP data size: {len(self.mbpp_data) if hasattr(self, 'mbpp_data') else 0}")
+            self.logger.info(f"ja-MGSM data size: {len(self.ja_mgsm_data) if hasattr(self, 'ja_mgsm_data') else 0}")
 
         # 6) その他設定
         self.num_epochs = num_epochs
@@ -331,11 +358,11 @@ class LambdaOptimizerCrossEntropy:
         else:
             self.scheduler = None
 
-    def load_training_data(self, num_samples):
+    def load_training_data(self, num_train_ratio):
         """訓練データの読み込み"""
-        self.gsm8k_data = load_gsm8k_data(num_samples=num_samples, seed=self.seed)
-        self.mbpp_data  = load_mbpp_data(num_samples=num_samples, seed=self.seed)
-        self.ja_mgsm_data = load_ja_mgsm_data(num_samples=num_samples, seed=self.seed)
+        self.gsm8k_data = load_gsm8k_data(ratio=num_train_ratio, seed=self.seed)
+        self.mbpp_data  = load_mbpp_data(ratio=num_train_ratio, seed=self.seed)
+        self.ja_mgsm_data = load_ja_mgsm_data(ratio=num_train_ratio, seed=self.seed)
 
     ###########################################################################
     # メモリモニタ用デコレータ (任意)
@@ -614,10 +641,10 @@ class LambdaOptimizerCrossEntropy:
 
             with autocast(enabled=True, dtype=torch.float16):
                 outputs = merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
-                # 計算グラフを保持したままlossをコピー
+                # 計算グラフを保持したままlossをdetachせずにコピー
                 loss = outputs.clone()
 
-            # 勾配に関係ないテンソルのみを解放
+            # 勾配に関係ないテンソルを明示的に解放
             del input_ids_tensor, labels_tensor
             del prompt_enc, answer_enc
             del outputs
@@ -636,60 +663,70 @@ class LambdaOptimizerCrossEntropy:
         return [data_list[i:i+bsz] for i in range(0, len(data_list), bsz)]
 
     #@memory_monitor_decorator
-    def train_one_epoch(self, batch_size: int = 2):
-        print("\n=== train_one_epoch start ===")
-        print(f"λの勾配状態: {self.lambdas.requires_grad}")
+    def train_one_epoch(self, batch_size: int = 1):
+        total_loss_value = 0.0
+        num_updates = 0
         
-        self.merged_model.merge()
-                
-        # optimizer.zero_gradをループの外に出す
-        self.optimizer.zero_grad()
-        total_loss = torch.tensor(0.0, device=self.device, dtype=torch.float16, requires_grad=True)
-
-        # タスクごとにバッチを回す
         tasks = [
             ("gsm8k",   self.gsm8k_data,   self.tokenizers[0], self.compute_gsm8k_batch_loss),
             ("mbpp",    self.mbpp_data,    self.tokenizers[1], self.compute_mbpp_batch_loss),
             ("ja_mgsm", self.ja_mgsm_data, self.tokenizers[2], self.compute_ja_mgsm_batch_loss)
         ]
-
-        try:            
-            for task_name, data, tokenizer, compute_loss_fn in tasks:
-                print(f"\nProcessing task: {task_name}")
-                batches = self.make_batches(data, batch_size)
-                task_loss = torch.tensor(0.0, device=self.device, dtype=torch.float16, requires_grad=True)
-
-                for batch_idx, batch in enumerate(batches):
-                    print(f"\nBatch {batch_idx + 1}/{len(batches)}")
-                    batch_loss = compute_loss_fn(batch, tokenizer, self.merged_model)
-                    print(f"Batch loss: {batch_loss.item()}")
-                    print(f"Batch loss requires_grad: {batch_loss.requires_grad}")
-                    task_loss = task_loss + batch_loss
+        
+        # 各タスクのバッチを作成
+        task_batches = [
+            (name, self.make_batches(data, batch_size), tokenizer, compute_fn)
+            for name, data, tokenizer, compute_fn in tasks
+        ]
+        
+        # 最長のバッチ数を取得
+        max_batches = max(len(batches) for _, batches, _, _ in task_batches)
+        
+        try:
+            for batch_idx in range(max_batches):
+                self.optimizer.zero_grad()
+                combined_loss = torch.tensor(0.0, device=self.device, dtype=torch.float16, requires_grad=True)
+                
+                print(f"\nProcessing combined batch {batch_idx + 1}/{max_batches}")
+                
+                # 各タスクから1バッチずつ取得して処理
+                for task_name, batches, tokenizer, compute_fn in task_batches:
+                    # データが少ないタスクは循環させる
+                    actual_idx = batch_idx % len(batches)
+                    batch = batches[actual_idx]
                     
+                    self.merged_model.merge()
+                    
+                    print(f"Processing {task_name} (batch {actual_idx + 1}/{len(batches)})")
+                    # 毎回新しい計算グラフを作成
+                    with torch.enable_grad():
+                        batch_loss = compute_fn(batch, tokenizer, self.merged_model)
+                        combined_loss = combined_loss + batch_loss.clone()
+                    
+                    del batch_loss
                     del batch
                     gc.collect()
-                    torch.cuda.empty_cache()
-                    
-                print(f"Task {task_name} total loss: {task_loss.item()}")
-                total_loss = total_loss + task_loss
-
-            # backward()実行
-            total_loss.backward()
-            
-            # optimizerのstepを実行
-            self.optimizer.step()
-            
-            # schedulerがあれば更新
+                
+                # 全タスクの損失の合計でbackward
+                combined_loss.backward()
+                self.optimizer.step()
+                
+                # スカラー値として記録
+                total_loss_value += combined_loss.item()
+                num_updates += 1
+                
+                del combined_loss
+                gc.collect()
+                torch.cuda.empty_cache()
+                
+            # schedulerの更新
             if self.scheduler is not None:
                 self.scheduler.step()
             
-            gc.collect()
-            torch.cuda.empty_cache()
-
         finally:
             torch.cuda.empty_cache()
-
-        return total_loss.item()
+        
+        return total_loss_value / num_updates if num_updates > 0 else float('inf')
 
     ###########################################################################
     # 学習全体 (optimize)
@@ -824,7 +861,7 @@ class LambdaOptimizerCrossEntropy:
             else:
                 optimized_df.to_csv(self.optimized_lambda_filepath, index=False)
 
-        # 最適なλをモデルに�定
+        # 最適なλをモデルに定
         self.lambdas.data = torch.tensor(best_lambdas, dtype=torch.float16, device=self.device)
         self.lambdas.requires_grad = False
         self.merged_model.merge()
