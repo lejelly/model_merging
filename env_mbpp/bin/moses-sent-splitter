@@ -1,0 +1,8 @@
+#!/work/02/gb20/b20042/model_merging/env_mbpp/bin/python3
+# -*- coding: utf-8 -*-
+import re
+import sys
+from mosestokenizer.sentsplitter import main
+if __name__ == '__main__':
+    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    sys.exit(main())

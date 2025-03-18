@@ -1,0 +1,57 @@
+=== メタGPT実行プロファイル (metagpt_strict) ===
+実行時間: 991.95秒
+GPUメモリ使用量: 0.00 MB
+
+         375743 function calls (265375 primitive calls) in 991.951 seconds
+
+   Ordered by: internal time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       12  448.559   37.380  854.749   71.229 /work/02/gb20/b20042/model_merging/proposed_methods.py:107(calculate_cosine_similarity)
+    12804  410.655    0.032  410.655    0.032 {method 'to' of 'torch._C.TensorBase' objects}
+    11640   72.335    0.006   72.335    0.006 {built-in method torch.sum}
+        4   59.792   14.948  137.113   34.278 /work/02/gb20/b20042/model_merging/proposed_methods.py:91(calculate_squared_norm)
+130416/20048    0.152    0.000    0.159    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/torch/nn/modules/module.py:2369(named_modules)
+    12804    0.124    0.000    0.124    0.000 {method 'detach' of 'torch._C.TensorBase' objects}
+        1    0.088    0.088    0.088    0.088 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:329(solve)
+    11640    0.073    0.000    0.073    0.000 {method 'item' of 'torch._C.TensorBase' objects}
+    12848    0.065    0.000    0.257    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/torch/nn/modules/module.py:2193(_named_members)
+    12804    0.029    0.000    0.029    0.000 {method 'cpu' of 'torch._C.TensorBase' objects}
+    19976    0.015    0.000    0.016    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/torch/nn/modules/module.py:2260(<lambda>)
+    12848    0.012    0.000    0.269    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/torch/nn/modules/module.py:2232(named_parameters)
+     4672    0.011    0.000    0.231    0.000 /work/02/gb20/b20042/model_merging/proposed_methods.py:79(parameter_iterator)
+     4656    0.009    0.000    0.013    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/torch/cuda/memory.py:150(empty_cache)
+    25608    0.007    0.000    0.013    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/torch/_tensor.py:1059(__hash__)
+    32780    0.007    0.000    0.010    0.000 {method 'add' of 'set' objects}
+    25608    0.005    0.000    0.005    0.000 {built-in method builtins.id}
+    39924    0.005    0.000    0.005    0.000 {method 'items' of 'collections.OrderedDict' objects}
+     4656    0.005    0.000    0.005    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/torch/cuda/__init__.py:216(is_initialized)
+        1    0.001    0.001  991.951  991.951 /work/02/gb20/b20042/model_merging/proposed_methods.py:920(metagpt_strict)
+        1    0.000    0.000    0.000    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/core/fromnumeric.py:71(_wrapreduction)
+        3    0.000    0.000    0.000    0.000 {built-in method builtins.print}
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/core/fromnumeric.py:2177(sum)
+        2    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:135(_makearray)
+        3    0.000    0.000    0.000    0.000 {built-in method numpy.zeros}
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:159(_commonType)
+        1    0.000    0.000    0.000    0.000 {built-in method builtins.isinstance}
+        2    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:153(_realType)
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:209(_assert_stacked_square)
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/core/fromnumeric.py:72(<dictcomp>)
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:203(_assert_stacked_2d)
+        1    0.000    0.000    0.000    0.000 {method 'astype' of 'numpy.ndarray' objects}
+        2    0.000    0.000    0.000    0.000 {built-in method builtins.getattr}
+        3    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:140(isComplexType)
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:130(get_linalg_error_extobj)
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/core/fromnumeric.py:2172(_sum_dispatcher)
+        2    0.000    0.000    0.000    0.000 {method 'get' of 'dict' objects}
+        1    0.000    0.000    0.000    0.000 /work/02/gb20/b20042/model_merging/work/lib/python3.10/site-packages/numpy/linalg/linalg.py:325(_solve_dispatcher)
+        5    0.000    0.000    0.000    0.000 {built-in method builtins.issubclass}
+        2    0.000    0.000    0.000    0.000 {built-in method numpy.asarray}
+        1    0.000    0.000    0.000    0.000 {method '__array_prepare__' of 'numpy.ndarray' objects}
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+        1    0.000    0.000    0.000    0.000 {built-in method time.time}
+        1    0.000    0.000    0.000    0.000 {built-in method builtins.len}
+        1    0.000    0.000    0.000    0.000 {method 'items' of 'dict' objects}
+
+

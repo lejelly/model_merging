@@ -1,0 +1,6 @@
+#!/work/02/gb20/b20042/model_merging/env_mbpp/bin/python3
+
+from deepspeed.launcher.runner import main
+
+if __name__ == '__main__':
+    main()
