@@ -13,7 +13,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
     device_map="auto",   # GPU分散など環境に応じて指定
-    torch_dtype=torch.float16,  # 16bitにしたい場合など
+    torch_dtype=torch.bfloat16,  # 16bitにしたい場合など
 )
 
 # 2) GSM8Kのテストセットをロード
@@ -22,7 +22,7 @@ dataset = load_dataset("gsm8k", "main")
 test_data = dataset["test"]
 
 # 3) テストサンプルを一定数ループ (ここでは簡単のため先頭の数件だけなど)
-num_samples_to_eval = 50 # len(test_data)  # 実際には len(test_data) など
+num_samples_to_eval = 5 # len(test_data)  # 実際には len(test_data) など
 results = []
 
 # プロンプトテンプレートを取得（デフォルトはzeroshotcot）
@@ -131,9 +131,9 @@ for b_i in range(len(bins)-1):
 plt.figure(figsize=(8,4))
 plt.bar(range(len(bin_accs)), bin_accs, width=0.6)
 plt.xticks(range(len(bin_accs)), bin_labels, rotation=45)
-plt.xlabel("Entropy bins")
-plt.ylabel("Accuracy")
-plt.title("Entropy vs Accuracy (Mistral-7B on GSM8K, sample)")
+plt.xlabel("Entropy")
+plt.ylabel("Average Accuracy")
+plt.title("Entropy vs Avg acc (Mistral-7B on GSM8K, sample)")
 plt.ylim([0,1])
 plt.tight_layout()
 plt.savefig('entropy_vs_accuracy.png', dpi=300, bbox_inches='tight')
