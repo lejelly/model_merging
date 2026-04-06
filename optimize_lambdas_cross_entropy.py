@@ -662,6 +662,7 @@ class LambdaOptimizerCrossEntropy:
     def make_batches(self, data_list, bsz):
         return [data_list[i:i+bsz] for i in range(0, len(data_list), bsz)]
 
+    """
     #@memory_monitor_decorator
     def train_one_epoch(self, batch_size: int = 1):
         total_loss_value = 0.0
@@ -727,6 +728,184 @@ class LambdaOptimizerCrossEntropy:
             torch.cuda.empty_cache()
         
         return total_loss_value / num_updates if num_updates > 0 else float('inf')
+    """
+    
+    def train_one_epoch(self, batch_size: int = 1):
+        total_loss_value = 0.0
+        num_updates = 0
+
+        # 各タスクについて (タスク名, データ, トークナイザー) のタプルリストを作成
+        tasks = [
+            ("gsm8k",   self.gsm8k_data,   self.tokenizers[0]),
+            ("mbpp",    self.mbpp_data,    self.tokenizers[1]),
+            ("ja_mgsm", self.ja_mgsm_data, self.tokenizers[2])
+        ]
+        # 各タスクのデータをバッチ分割しておく
+        task_batches = [
+            (name, self.make_batches(data, batch_size), tokenizer)
+            for name, data, tokenizer in tasks
+        ]
+        # 各タスクでバッチ数が異なる場合、最長のバッチ数を取得
+        max_batches = max(len(batches) for _, batches, _ in task_batches)
+        
+        # task_batches の作成後など、各タスクのトークナイザーのpad_token_idをチェック
+        all_pad_ids = []
+        for task_name, batches, tokenizer in task_batches:
+            # 各トークナイザーでpad_token_idが未設定の場合は、"<pad>"を変換したIDを利用する
+            if tokenizer.pad_token_id is not None:
+                print(f"{task_name}: tokenizer.pad_token_id = {tokenizer.pad_token_id}")
+            else:
+                print(f"{task_name}: tokenizer.pad_token_id is None")
+                
+            pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.convert_tokens_to_ids("<pad>")
+            all_pad_ids.append(pad_id)
+
+        if len(set(all_pad_ids)) == 1:
+            global_pad_id = all_pad_ids[0]
+            print(f"すべてのトークナイザーで同一の<pad>が設定されています。global_pad_id = {global_pad_id}")
+        else:
+            # 異なる場合は、警告を出すか、どれか1つを利用する（ここでは最初のものを利用）
+            global_pad_id = all_pad_ids[0]
+            print(f"警告: トークナイザーごとに<pad>が異なっています。最初のトークナイザーのpad_token_id ({global_pad_id}) を使用します。")
+
+        try:
+            for batch_idx in range(max_batches):
+                self.optimizer.zero_grad()
+                combined_input_ids_list = []
+                combined_labels_list = []
+
+                # 各タスクから１バッチずつ取り出して入力リストに追加
+                for task_name, batches, tokenizer in task_batches:
+                    # データ数が少ないタスクは循環させる
+                    actual_idx = batch_idx % len(batches)
+                    batch = batches[actual_idx]  # 1バッチ分（リスト）のデータ
+
+                    # タスクごとに入力の組み立て（ここでは各タスクの compute_*_batch_loss と同様の処理）
+                    if task_name == "gsm8k":
+                        prompts = [f"Q: {item['question']}\nA:" for item in batch]
+                        answers = [item["answer"] for item in batch]
+                        encoded_prompt = tokenizer(
+                            prompts,
+                            padding=True,
+                            truncation=True,
+                            max_length=self.max_length,
+                            return_tensors="pt"
+                        ).to(self.device)
+                        encoded_answer = tokenizer(
+                            answers,
+                            padding=True,
+                            truncation=True,
+                            max_length=self.max_length,
+                            return_tensors="pt"
+                        ).to(self.device)
+                        pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
+                        for i in range(len(prompts)):
+                            p_ids = encoded_prompt.input_ids[i].tolist()
+                            a_ids = encoded_answer.input_ids[i].tolist()
+                            # 有効なトークン数（pad_idでない数）をカウント
+                            p_len = sum(1 for x in p_ids if x != pad_id)
+                            a_len = sum(1 for x in a_ids if x != pad_id)
+                            merged_ids = p_ids[:p_len] + a_ids[:a_len]
+                            merged_labels = ([-100] * p_len) + a_ids[:a_len]
+                            combined_input_ids_list.append(merged_ids)
+                            combined_labels_list.append(merged_labels)
+
+                    elif task_name == "mbpp":
+                        prompts = [f"{item['text']}\nSolution:\n" for item in batch]
+                        codes = [item["code"] for item in batch]
+                        encoded_prompt = tokenizer(
+                            prompts,
+                            padding=True,
+                            truncation=True,
+                            max_length=self.max_length,
+                            return_tensors="pt"
+                        ).to(self.device)
+                        encoded_code = tokenizer(
+                            codes,
+                            padding=True,
+                            truncation=True,
+                            max_length=self.max_length,
+                            return_tensors="pt"
+                        ).to(self.device)
+                        pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
+                        for i in range(len(prompts)):
+                            p_ids = encoded_prompt.input_ids[i].tolist()
+                            c_ids = encoded_code.input_ids[i].tolist()
+                            p_len = sum(1 for x in p_ids if x != pad_id)
+                            c_len = sum(1 for x in c_ids if x != pad_id)
+                            merged_ids = p_ids[:p_len] + c_ids[:c_len]
+                            merged_labels = ([-100] * p_len) + c_ids[:c_len]
+                            combined_input_ids_list.append(merged_ids)
+                            combined_labels_list.append(merged_labels)
+
+                    elif task_name == "ja_mgsm":
+                        prompts = [f"{item['question']}\n答えを考える: " for item in batch]
+                        answers = [item["answer"] for item in batch]
+                        encoded_prompt = tokenizer(
+                            prompts,
+                            padding=True,
+                            truncation=True,
+                            max_length=self.max_length,
+                            return_tensors="pt"
+                        ).to(self.device)
+                        encoded_answer = tokenizer(
+                            answers,
+                            padding=True,
+                            truncation=True,
+                            max_length=self.max_length,
+                            return_tensors="pt"
+                        ).to(self.device)
+                        pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id or 0
+                        for i in range(len(prompts)):
+                            p_ids = encoded_prompt.input_ids[i].tolist()
+                            a_ids = encoded_answer.input_ids[i].tolist()
+                            p_len = sum(1 for x in p_ids if x != pad_id)
+                            a_len = sum(1 for x in a_ids if x != pad_id)
+                            merged_ids = p_ids[:p_len] + a_ids[:a_len]
+                            merged_labels = ([-100] * p_len) + a_ids[:a_len]
+                            combined_input_ids_list.append(merged_ids)
+                            combined_labels_list.append(merged_labels)
+
+                # 全タスク分の入力がcombined_input_ids_list、ラベルがcombined_labels_listにたまっているので、
+                # その中での最大長を取得してパディングする
+                if not combined_input_ids_list:
+                    continue  # 入力がなければスキップ
+                 
+                max_seq_len = max(len(seq) for seq in combined_input_ids_list)
+                for i in range(len(combined_input_ids_list)):
+                    diff_len = max_seq_len - len(combined_input_ids_list[i])
+                    combined_input_ids_list[i].extend([global_pad_id] * diff_len)
+                    combined_labels_list[i].extend([-100] * diff_len)
+
+                # テンソルに変換
+                input_ids_tensor = torch.tensor(combined_input_ids_list, dtype=torch.long, device=self.device)
+                labels_tensor = torch.tensor(combined_labels_list, dtype=torch.long, device=self.device)
+
+                # １回だけ merge() して、まとめた大きなバッチで forward pass
+                self.merged_model.merge()
+                with autocast(enabled=True, dtype=torch.float16):
+                    outputs = self.merged_model(input_ids=input_ids_tensor, labels=labels_tensor)
+                    loss = outputs.clone()  # 出力がlossの場合
+                loss.backward()
+                self.optimizer.step()
+
+                total_loss_value += loss.item()
+                num_updates += 1
+
+                # 後処理
+                del input_ids_tensor, labels_tensor, loss
+                gc.collect()
+                torch.cuda.empty_cache()
+
+            # scheduler の更新（エポック終了後）
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+        finally:
+            torch.cuda.empty_cache()
+
+        return total_loss_value / num_updates if num_updates > 0 else float('inf')
+
 
     ###########################################################################
     # 学習全体 (optimize)
